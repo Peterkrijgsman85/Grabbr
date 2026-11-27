@@ -40,7 +40,7 @@
     updateHistoryUI();
     window.grabbr.onOpenCapture(mode => openCapture(mode));
     window.grabbr.onCaptureError(message => showToast(message, true));
-    window.grabbr.onSettingsUpdated(settings => { appInfo = { ...appInfo, ...settings }; engine.configureDefaults(appInfo.editor||{});updateCopyButtonLabel(); });
+    window.grabbr.onSettingsUpdated(settings => { appInfo = { ...appInfo, ...settings }; engine.configureDefaults(appInfo.editor||{});updateCopyButtonLabel();renderUpdateStatus(); });
     window.grabbr.onOpenSettings(()=>openSettings());
     if (windowMode === 'annotation') {
       const payload = await window.grabbr.getInitialAnnotation();
@@ -69,6 +69,8 @@
     $('#outputFormat').addEventListener('change',updateOutputControls);
     $('#jpegQuality').addEventListener('input',e=>{$('#jpegQualityValue').textContent=`${e.target.value}%`;});
     $('#filenamePattern').addEventListener('input',updateFilenamePreview);
+    $('#checkUpdatesNow').addEventListener('click',checkUpdatesNow);
+    $('#viewRelease').addEventListener('click',viewRelease);
     $$('.hotkey-input').forEach(input => {
       input.addEventListener('focus', () => beginHotkeyRecording(input));
       input.addEventListener('click', () => beginHotkeyRecording(input));
@@ -509,11 +511,15 @@
     $('#filenamePattern').value=editingStorage.filenamePattern||'Grabbr-{date}-{time}-{type}';
     $('#outputFormat').value=editingStorage.format==='jpeg'?'jpeg':'png';$('#jpegQuality').value=editingStorage.jpegQuality||90;$('#jpegQualityValue').textContent=`${$('#jpegQuality').value}%`;
     $('#defaultStrokeWidth')._showValue?.(editingEditor.strokeWidth||7);$('#defaultFontSize')._showValue?.(editingEditor.fontSize||28);$('#defaultStepSize')._showValue?.(editingEditor.stepSize||44);$('#defaultAnnotationShadow').checked=editingEditor.annotationShadow===true;
+    $('#automaticUpdateCheck').checked=appInfo.updates?.automatic!==false;$('#currentVersion').textContent=appInfo.version||'';renderUpdateStatus();
     updateOutputControls();updateFilenamePreview();showSettingsPanel('general');
   }
   function showSettingsPanel(name){$$('.settings-nav button').forEach(b=>b.classList.toggle('active',b.dataset.settingsTarget===name));$$('.settings-panel').forEach(p=>p.classList.toggle('active',p.dataset.settingsPanel===name));}
   function updateOutputControls(){$('#jpegQualityRow').classList.toggle('hidden',$('#outputFormat').value!=='jpeg');updateFilenamePreview();}
   function updateFilenamePreview(){const format=$('#outputFormat').value;$('#filenamePreview').textContent=GrabbrFilenamePattern.filenameFromPattern($('#filenamePattern').value,{date:new Date(2026,10,27,9,30,15),type:'Venster',counter:1,format});}
+  function renderUpdateStatus(){const status=appInfo.updateStatus||{state:'idle',message:'Nog niet gecontroleerd.'};$('#updateStatus').textContent=status.message||'';$('#updateStatus').className=`update-status ${status.state||'idle'}`;$('#viewRelease').classList.toggle('hidden',status.state!=='available'||!status.url);}
+  async function checkUpdatesNow(){const button=$('#checkUpdatesNow');button.disabled=true;try{const status=await window.grabbr.checkUpdatesNow();appInfo.updateStatus=status;renderUpdateStatus();}catch(error){appInfo.updateStatus={state:'error',message:`Updatecontrole mislukt: ${error.message}`};renderUpdateStatus();}finally{button.disabled=false;}}
+  async function viewRelease(){const url=appInfo.updateStatus?.url;if(!url)return;const result=await window.grabbr.openRelease(url);if(!result?.ok)showToast(result?.reason||'Releasepagina kon niet worden geopend.',true);}
 
   function updateStorageControls() {
     const enabled = $('#autoSaveEnabled').checked;
@@ -563,6 +569,7 @@
       capture:{windowShadow:$('#captureShadowEnabled').checked},
       storage:{autoSave:$('#autoSaveEnabled').checked,directory:$('#storageDirectory').value,filenamePattern:$('#filenamePattern').value,format:$('#outputFormat').value,jpegQuality:Number($('#jpegQuality').value)},
       editor:{strokeWidth:Number($('#defaultStrokeValue').dataset.value),fontSize:Number($('#defaultFontValue').dataset.value),stepSize:Number($('#defaultStepValue').dataset.value),annotationShadow:$('#defaultAnnotationShadow').checked},
+      updates:{automatic:$('#automaticUpdateCheck').checked,lastCheckedAt:appInfo.updates?.lastCheckedAt||null,includePrereleases:false},
       recent:appInfo.recent||{}
     };
     try{

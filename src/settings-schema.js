@@ -8,6 +8,7 @@ const DEFAULT_SETTINGS=Object.freeze({
   capture:{windowShadow:true},
   storage:{autoSave:true,directory:null,filenamePattern:DEFAULT_FILENAME_PATTERN,format:'png',jpegQuality:90},
   editor:{strokeWidth:7,fontSize:28,stepSize:44,annotationShadow:false},
+  updates:{automatic:true,lastCheckedAt:null,includePrereleases:false},
   recent:{lastSavedPath:null}
 });
 const bounded=(v,min,max,fallback)=>Number.isFinite(Number(v))?Math.max(min,Math.min(max,Math.round(Number(v)))):fallback;
@@ -37,6 +38,7 @@ function migrateSettings(raw={},defaultDirectory=null){
       stepSize:bounded(raw.editor?.stepSize,1,200,44),
       annotationShadow:raw.editor?.annotationShadow===true
     },
+    updates:{automatic:raw.updates?.automatic!==false,lastCheckedAt:typeof raw.updates?.lastCheckedAt==='string'?raw.updates.lastCheckedAt:null,includePrereleases:raw.updates?.includePrereleases===true},
     recent:{lastSavedPath:typeof raw.recent?.lastSavedPath==='string'?raw.recent.lastSavedPath:null}
   };
 }

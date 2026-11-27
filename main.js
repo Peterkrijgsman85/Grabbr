@@ -1,7 +1,7 @@
 'use strict';
 
 const electron = require('electron');
-const { app, BrowserWindow, ipcMain, desktopCapturer, dialog, nativeImage, globalShortcut, Tray, Menu, shell, systemPreferences, screen, session } = electron;
+const { app, BrowserWindow, ipcMain, desktopCapturer, dialog, nativeImage, globalShortcut, Tray, Menu, shell, systemPreferences, screen, session, net } = electron;
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { DEFAULTS, validateSettings } = require('./src/hotkeys.js');
@@ -15,6 +15,9 @@ const { loadRecentScreenshot } = require('./src/recent-screenshot.js');
 const { WindowLifecyclePolicy } = require('./src/window-lifecycle.js');
 const { migrateSettings } = require('./src/settings-schema.js');
 const { filenameFromPattern, filenameForAttempt } = require('./src/filename-pattern.js');
+const { isCheckDue, normalizeRepository, isSafeReleaseUrl } = require('./src/update-check.js');
+const { checkForUpdate } = require('./src/update-service.js');
+const packageMetadata = require('./package.json');
 
 app.setName('Grabbr');
 
@@ -35,6 +38,9 @@ let general = { hideGrabbrDuringCapture: true };
 let captureSettings = { windowShadow: true };
 let editorSettings = { strokeWidth: 7, fontSize: 28, stepSize: 44, annotationShadow: false };
 let recent = { lastSavedPath: null };
+let updates = { automatic: true, lastCheckedAt: null, includePrereleases: false };
+let updateStatus = { state: 'idle', message: 'Nog niet gecontroleerd.' };
+const githubRepository = normalizeRepository(process.env.GRABBR_GITHUB_REPOSITORY || packageMetadata.grabbr?.githubRepository);
 let regionContext = null;
 const annotationWindows = new WindowRegistry();
 const annotationPayloads = new Map();
@@ -56,6 +62,7 @@ async function loadSettings() {
     general={hideGrabbrDuringCapture:migrated.general.hideGrabbrDuringCapture};
     captureSettings=migrated.capture;
     editorSettings=migrated.editor;
+    updates=migrated.updates;
     recent=migrated.recent;
     lastSavedPath = recent.lastSavedPath;
   } catch {
@@ -63,7 +70,7 @@ async function loadSettings() {
     storage = { autoSave: true, directory: defaultDirectory };
     startup = { openAtLogin: false };
     annotation = { ...DEFAULT_ANNOTATION_SETTINGS };
-    general={hideGrabbrDuringCapture:true}; captureSettings={windowShadow:true}; editorSettings={strokeWidth:7,fontSize:28,stepSize:44,annotationShadow:false};
+    general={hideGrabbrDuringCapture:true}; captureSettings={windowShadow:true}; editorSettings={strokeWidth:7,fontSize:28,stepSize:44,annotationShadow:false}; updates={automatic:true,lastCheckedAt:null,includePrereleases:false};
     recent = { lastSavedPath: null };
   }
   await fs.mkdir(storage.directory, { recursive: true }).catch(() => {});
@@ -74,7 +81,7 @@ async function saveSettings() {
   await fs.writeFile(settingsPath(), JSON.stringify({
     shortcuts,
     general:{startup:startup.openAtLogin,afterCopy:annotation.afterCopy,hideGrabbrDuringCapture:general.hideGrabbrDuringCapture},
-    capture:captureSettings, storage, editor:editorSettings, recent
+    capture:captureSettings, storage, editor:editorSettings, updates, recent
   }, null, 2), 'utf8');
 }
 
@@ -91,7 +98,7 @@ function settingsSnapshot() {
     storage: { ...storage },
     startup: nativeStartupState(),
     annotation: { ...annotation }
-    ,general:{...general},capture:{...captureSettings},editor:{...editorSettings},recent:{...recent}
+    ,general:{...general},capture:{...captureSettings},editor:{...editorSettings},updates:{...updates},updateStatus:{...updateStatus},githubRepository,recent:{...recent}
   };
 }
 
@@ -100,6 +107,23 @@ function broadcastSettings() {
   for (const win of [mainWindow, ...annotationWindows.values()]) {
     if (win && !win.isDestroyed()) win.webContents.send('settings:updated', snapshot);
   }
+}
+
+async function performUpdateCheck({ manual = false } = {}) {
+  if (!manual && (!updates.automatic || !isCheckDue(updates.lastCheckedAt))) return { ...updateStatus, skipped: true };
+  if (!githubRepository) {
+    updateStatus = { state: 'error', message: 'Updatecontrole is niet geconfigureerd voor deze bronbuild.' };
+    broadcastSettings();
+    return updateStatus;
+  }
+  updateStatus = { state: 'checking', message: 'Controleren op updates…' };
+  broadcastSettings();
+  const checkedAt = new Date().toISOString();
+  updateStatus = { ...(await checkForUpdate({repository:githubRepository,currentVersion:app.getVersion(),includePrereleases:updates.includePrereleases,fetchImpl:net?.fetch?.bind(net)})),checkedAt };
+  updates.lastCheckedAt = checkedAt;
+  await saveSettings().catch(() => {});
+  broadcastSettings();
+  return { ...updateStatus };
 }
 
 function nativeStartupState() {
@@ -409,6 +433,8 @@ app.whenReady().then(async () => {
     }
   });
   createWindow(); createTray(); registerShortcuts(shortcuts);
+  setTimeout(() => performUpdateCheck({ manual: false }), 2500).unref?.();
+  setInterval(() => performUpdateCheck({ manual: false }), 60 * 60 * 1000).unref?.();
   app.on('activate', () => { lifecyclePolicy.activateExistingMainWindow(mainWindow); });
 });
 
@@ -476,10 +502,16 @@ ipcMain.handle('settings:update-all',async(_event,next)=>{
   const shortcutResult=registerShortcuts(next.shortcuts||shortcuts); if(!shortcutResult.ok)return shortcutResult;
   const migrated=migrateSettings({...next,shortcuts:shortcutResult.shortcuts,recent},storage.directory);
   const startupResult=applyStartupPreference(migrated.general.startup); if(!startupResult.ok)return startupResult;
-  shortcuts=migrated.shortcuts; general=migrated.general; captureSettings=migrated.capture; storage=migrated.storage; editorSettings=migrated.editor;
+  shortcuts=migrated.shortcuts; general=migrated.general; captureSettings=migrated.capture; storage=migrated.storage; editorSettings=migrated.editor; updates=migrated.updates;
   startup={openAtLogin:general.startup}; annotation={afterCopy:general.afterCopy};
   applyCaptureVisibilityProtection(); await saveSettings(); broadcastSettings(); refreshTrayMenu();
   return {ok:true,...settingsSnapshot()};
+});
+ipcMain.handle('updates:check-now', async () => performUpdateCheck({ manual: true }));
+ipcMain.handle('updates:open-release', async (_event, url) => {
+  if (!isSafeReleaseUrl(url, githubRepository)) return { ok: false, reason: 'De release-URL is niet toegestaan.' };
+  try { await shell.openExternal(url); return { ok: true }; }
+  catch (error) { return { ok: false, reason: `De releasepagina kon niet worden geopend: ${error.message}` }; }
 });
 
 ipcMain.handle('capture:start-region', async event => {
@@ -546,4 +578,3 @@ ipcMain.handle('image:save', async (event, { dataUrl, suggestedName = 'Grabbr.pn
 });
 ipcMain.handle('image:show-last', () => { if (lastSavedPath) shell.showItemInFolder(lastSavedPath); return Boolean(lastSavedPath); });
 ipcMain.handle('window:hide', event => { BrowserWindow.fromWebContents(event.sender)?.hide(); return true; });
-ipcMain.handle('external:open', (_event, url) => shell.openExternal(url));

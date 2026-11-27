@@ -212,3 +212,9 @@ De vensterschaduw heeft alleen `enabled`. Renderwaarden zijn vast en de canvas w
 ## Instellingenschema 0.7.3
 
 `settings-schema.js` migreert 0.7.2-velden (`startup`, `annotation`, beperkte `storage`) naar de secties `general`, `capture`, `storage` en `editor`. Editorwaarden worden veilig tot 1–200 begrensd. De renderer toont 5–50 voor lijndikte, maar bewaart een handmatige echte waarde buiten dat bereik. `filename-pattern.js` rendert tokens, saneert platformongeldige tekens, kiest de extensie en maakt conflictvarianten. Het traymenu krijgt dezelfde shortcuts uit het centrale settingssnapshot en wordt direct opnieuw opgebouwd na succesvolle registratie.
+
+## Update-detectie
+
+`update-check.js` bevat pure semver-, releasefilter-, interval- en URLvalidatie. `update-service.js` doet één publieke GitHub REST-call zonder token. Het main process gebruikt `net.fetch`, bewaart alleen `lastCheckedAt` en een tijdelijke status, en broadcast die naar vensters. Er is geen electron-updater, downloadfunctie, installatieactie of telemetrie. Externe navigatie loopt via een specifieke IPC-handler die alleen de release-URL van de geconfigureerde repository accepteert.
+
+De releaseworkflow injecteert `${{ github.repository }}` uitsluitend in de gebouwde package metadata. Daardoor verwijst een releasebuild naar zijn werkelijke repository zonder hardcoded eigenaar in de bron.

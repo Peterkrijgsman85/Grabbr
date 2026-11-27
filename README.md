@@ -13,6 +13,18 @@ Grabbr is een screenshottool voor **macOS en Windows** met vensterselectie, full
 - **Na kopiëren** heeft drie acties: alleen kopiëren, sluiten of minimaliseren.
 - De primaire knoptekst volgt de gekozen kopieeractie direct.
 - Migratie van de 0.7.3-instelling `closeAfterCopy` naar de nieuwe actie.
+- Handmatige update-detectie en maximaal dagelijkse controle tegen gepubliceerde GitHub Releases, zonder download of installatie.
+- Taggestuurde GitHub Draft Release-flow voor macOS arm64 en Windows x64.
+
+### Update-detectie
+
+Onder **Instellingen → Algemeen** staat **Automatisch controleren op updates**, standaard aan. Grabbr controleert bij opstarten en daarna maximaal eenmaal per 24 uur. **Nu controleren** omzeilt alleen het interval; de app downloadt of installeert niets. Draft releases en standaard ook pre-releases worden genegeerd. Bij een nieuwere versie opent **Bekijk release** uitsluitend een gevalideerde `https://github.com/<owner>/<repo>/releases/...`-URL in de standaardbrowser.
+
+Releasebuilds krijgen de echte repository automatisch vanuit GitHub Actions. Een lokale bronbuild zonder geconfigureerde repository toont een niet-blokkerende configuratiemelding.
+
+### Draft releaseflow
+
+`.github/workflows/release.yml` start alleen op `v*`-tags waarvan de versie exact overeenkomt met `package.json` en waarvan de commit op `main`, `master` of `stable` staat. Na tests worden macOS arm64 en Windows x64 parallel gebouwd. De workflow maakt een Draft Release met gegenereerde notes, checksums en artifacts; publiceren blijft handmatig. Zie `RELEASE.md`.
 
 ### Coördinaten en Retina/DPI
 
