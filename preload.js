@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('grabbr', {
   hideWindow: () => ipcRenderer.invoke('window:hide'),
   checkUpdatesNow: () => ipcRenderer.invoke('updates:check-now'),
   openRelease: url => ipcRenderer.invoke('updates:open-release', url),
+  openGitHub: () => ipcRenderer.invoke('updates:open-github'),
   onOpenCapture: callback => {
     const listener = (_event, mode) => callback(mode);
     ipcRenderer.on('capture:open', listener);

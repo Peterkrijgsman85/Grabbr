@@ -1,6 +1,6 @@
 {
   "name": "grabbr",
-  "version": "0.7.5",
+  "version": "0.7.6",
   "description": "Cross-platform screenshottool met window capture en annotaties",
   "main": "main.js",
   "author": "Grabbr contributors",

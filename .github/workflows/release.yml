@@ -44,7 +44,7 @@ jobs:
           git merge-base --is-ancestor "$GITHUB_SHA" "$stable_ref" || { echo "Tagged commit is not on stable branch $stable_ref"; exit 1; }
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
       - name: Install exact build dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Run tests
         run: npm test
       - name: Static checks
