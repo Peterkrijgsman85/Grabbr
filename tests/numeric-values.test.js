@@ -1,0 +1,3 @@
+const test=require('node:test');const assert=require('node:assert/strict');const {normalizeManualValue,sliderPosition}=require('../src/numeric-values.js');
+test('handmatige px-waarden mogen buiten sliderbereik maar blijven veilig 1-200',()=>{assert.equal(normalizeManualValue(1),1);assert.equal(normalizeManualValue(200),200);assert.equal(normalizeManualValue(0),1);assert.equal(normalizeManualValue(900),200);});
+test('slider toont min/max zonder de echte waarde te veranderen',()=>{assert.equal(sliderPosition(2,5,50),5);assert.equal(sliderPosition(120,5,50),50);assert.equal(sliderPosition(27,5,50),27);});

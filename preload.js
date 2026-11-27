@@ -10,10 +10,15 @@ contextBridge.exposeInMainWorld('grabbr', {
   updateStorage: settings => ipcRenderer.invoke('settings:update-storage', settings),
   updateStartup: enabled => ipcRenderer.invoke('settings:update-startup', enabled),
   updateAnnotationSettings: settings => ipcRenderer.invoke('settings:update-annotation', settings),
+  updateAllSettings: settings => ipcRenderer.invoke('settings:update-all', settings),
   getInitialAnnotation: () => ipcRenderer.invoke('annotation:get-initial'),
   openAnnotation: payload => ipcRenderer.invoke('annotation:open', payload),
   closeSelf: () => ipcRenderer.invoke('window:close-self'),
+  closeEmptyHome:()=>ipcRenderer.invoke('window:close-empty-home'),
+  minimizeSelf:()=>ipcRenderer.invoke('window:minimize-self'),
   startRegionCapture: () => ipcRenderer.invoke('capture:start-region'),
+  hideGrabbrWindows:()=>ipcRenderer.invoke('capture:hide-grabbr-windows'),
+  restoreGrabbrWindows:()=>ipcRenderer.invoke('capture:restore-grabbr-windows'),
   listSources: kind => ipcRenderer.invoke('capture:list-sources', kind),
   prepareCapture: (id, kind) => ipcRenderer.invoke('capture:prepare', { id, kind }),
   getSourceImage: (id, kind) => ipcRenderer.invoke('capture:get-source-image', { id, kind }),
@@ -37,5 +42,6 @@ contextBridge.exposeInMainWorld('grabbr', {
     const listener = (_event, settings) => callback(settings);
     ipcRenderer.on('settings:updated', listener);
     return () => ipcRenderer.removeListener('settings:updated', listener);
-  }
+  },
+  onOpenSettings:callback=>{const listener=()=>callback();ipcRenderer.on('settings:open',listener);return()=>ipcRenderer.removeListener('settings:open',listener);}
 });

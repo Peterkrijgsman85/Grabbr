@@ -20,7 +20,8 @@
       return { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
     }
     if (item.type === 'text') {
-      return { x: item.x, y: item.y - item.fontSize, width: item.width || item.text.length * item.fontSize * 0.62, height: item.fontSize * 1.35 };
+      const lines=String(item.text||'').split('\n');
+      return { x: item.x, y: item.y - item.fontSize, width: item.width || Math.max(...lines.map(line=>line.length))*item.fontSize*0.62, height: item.fontSize * (1.2*lines.length+.15) };
     }
     if (item.type === 'step') {
       const r = item.radius || 16;
@@ -51,7 +52,7 @@
   }
 
   function resizeHandles(item) {
-    if (!item || !['arrow', 'line', 'rect', 'ellipse', 'blur', 'pixelate', 'step'].includes(item.type)) return [];
+    if (!item || !['arrow', 'line', 'rect', 'ellipse', 'blur', 'pixelate', 'text', 'step'].includes(item.type)) return [];
     if (item.type === 'arrow' || item.type === 'line') {
       return [
         { id: 'start', x: item.x1, y: item.y1, cursor: 'move' },
@@ -59,7 +60,7 @@
       ];
     }
     const b = annotationBounds(item);
-    if (item.type === 'step') {
+    if (item.type === 'step' || item.type === 'text') {
       return [
         { id: 'nw', x: b.x, y: b.y, cursor: 'nwse-resize' },
         { id: 'ne', x: b.x + b.width, y: b.y, cursor: 'nesw-resize' },
@@ -96,6 +97,24 @@
       resized.fontSize = Math.max(10, resized.radius * 1.15);
       return resized;
     }
+    if (resized.type === 'text') {
+      const b = annotationBounds(resized);
+      const opposite = {
+        nw:{x:b.x+b.width,y:b.y+b.height}, ne:{x:b.x,y:b.y+b.height},
+        se:{x:b.x,y:b.y}, sw:{x:b.x+b.width,y:b.y}
+      }[handleId];
+      if (!opposite) return resized;
+      const originalDistance=Math.max(1,Math.hypot(b.width,b.height));
+      const newDistance=Math.max(minimum,Math.hypot(point.x-opposite.x,point.y-opposite.y));
+      const scale=newDistance/originalDistance;
+      resized.fontSize=Math.max(1,Math.min(200,resized.fontSize*scale));
+      resized.width=0;
+      if (handleId==='nw'||handleId==='sw') resized.x=opposite.x-(b.width*scale);
+      else resized.x=opposite.x;
+      if (handleId==='nw'||handleId==='ne') resized.y=opposite.y-(b.height*scale)+resized.fontSize;
+      else resized.y=opposite.y+resized.fontSize;
+      return resized;
+    }
     const b = annotationBounds(resized);
     let left = b.x, right = b.x + b.width, top = b.y, bottom = b.y + b.height;
     if (handleId.includes('w')) left = Math.min(point.x, right - minimum);
@@ -120,6 +139,10 @@
 
   function supportsFontSize(item) {
     return item?.type === 'text';
+  }
+
+  function supportsAnnotationShadow(item) {
+    return Boolean(item && ['arrow','line','rect','ellipse','text','step'].includes(item.type));
   }
 
   function duplicateAnnotation(item, dx = 16, dy = 16, id = null) {
@@ -148,5 +171,5 @@
     canRedo() { return this.index >= 0 && this.index < this.items.length - 1; }
   }
 
-  return { normalizeRect, rectContains, annotationBounds, hitTest, mapClientToDocument, resizeHandles, hitResizeHandle, resizeAnnotation, translateAnnotation, supportsStrokeWidth, supportsFontSize, duplicateAnnotation, deepClone, History };
+  return { normalizeRect, rectContains, annotationBounds, hitTest, mapClientToDocument, resizeHandles, hitResizeHandle, resizeAnnotation, translateAnnotation, supportsStrokeWidth, supportsFontSize, supportsAnnotationShadow, duplicateAnnotation, deepClone, History };
 });

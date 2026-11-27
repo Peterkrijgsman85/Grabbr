@@ -5,7 +5,6 @@ const { app, BrowserWindow, ipcMain, desktopCapturer, dialog, nativeImage, globa
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { DEFAULTS, validateSettings } = require('./src/hotkeys.js');
-const { screenshotFilename } = require('./src/storage.js');
 const { isSupportedPlatform, loginItemOptions, normalizeState } = require('./src/startup.js');
 const { isOwnSourceName, filterExternalSources } = require('./src/capture-policy.js');
 const { detectClipboardCapabilities, writePngToSystemClipboard } = require('./src/system-clipboard.js');
@@ -14,6 +13,8 @@ const { DEFAULT_ANNOTATION_SETTINGS, normalizeAnnotationSettings } = require('./
 const { buildTrayTemplate } = require('./src/tray-menu.js');
 const { loadRecentScreenshot } = require('./src/recent-screenshot.js');
 const { WindowLifecyclePolicy } = require('./src/window-lifecycle.js');
+const { migrateSettings } = require('./src/settings-schema.js');
+const { filenameFromPattern, filenameForAttempt } = require('./src/filename-pattern.js');
 
 app.setName('Grabbr');
 
@@ -22,6 +23,7 @@ const electronClipboard = electron.clipboard;
 let mainWindow;
 let overlayWindow;
 let tray;
+let settingsWindow;
 let lastSavedPath = null;
 let pendingCapture = null;
 let shortcuts = { ...DEFAULTS };
@@ -29,10 +31,14 @@ let shortcutStatus = {};
 let storage = { autoSave: true, directory: null };
 let startup = { openAtLogin: false };
 let annotation = { ...DEFAULT_ANNOTATION_SETTINGS };
+let general = { hideGrabbrDuringCapture: true };
+let captureSettings = { windowShadow: true };
+let editorSettings = { strokeWidth: 7, fontSize: 28, stepSize: 44, annotationShadow: false };
 let recent = { lastSavedPath: null };
 let regionContext = null;
 const annotationWindows = new WindowRegistry();
 const annotationPayloads = new Map();
+const captureHiddenWindows = new Map();
 const isMac = process.platform === 'darwin';
 const lifecyclePolicy = new WindowLifecyclePolicy();
 
@@ -42,21 +48,22 @@ async function loadSettings() {
   const defaultDirectory = path.join(app.getPath('pictures'), 'Grabbr');
   try {
     const parsed = JSON.parse(await fs.readFile(settingsPath(), 'utf8'));
-    const checked = validateSettings(parsed.shortcuts);
-    shortcuts = checked.valid ? checked.settings : { ...DEFAULTS };
-    storage = {
-      autoSave: parsed.storage?.autoSave !== false,
-      directory: typeof parsed.storage?.directory === 'string' && parsed.storage.directory.trim() ? parsed.storage.directory : defaultDirectory
-    };
-    startup = { openAtLogin: parsed.startup?.openAtLogin === true };
-    annotation = normalizeAnnotationSettings(parsed.annotation);
-    recent = { lastSavedPath: typeof parsed.recent?.lastSavedPath === 'string' ? parsed.recent.lastSavedPath : null };
+    const migrated=migrateSettings(parsed,defaultDirectory);
+    shortcuts=migrated.shortcuts;
+    storage=migrated.storage;
+    startup={openAtLogin:migrated.general.startup};
+    annotation={afterCopy:migrated.general.afterCopy};
+    general={hideGrabbrDuringCapture:migrated.general.hideGrabbrDuringCapture};
+    captureSettings=migrated.capture;
+    editorSettings=migrated.editor;
+    recent=migrated.recent;
     lastSavedPath = recent.lastSavedPath;
   } catch {
     shortcuts = { ...DEFAULTS };
     storage = { autoSave: true, directory: defaultDirectory };
     startup = { openAtLogin: false };
     annotation = { ...DEFAULT_ANNOTATION_SETTINGS };
+    general={hideGrabbrDuringCapture:true}; captureSettings={windowShadow:true}; editorSettings={strokeWidth:7,fontSize:28,stepSize:44,annotationShadow:false};
     recent = { lastSavedPath: null };
   }
   await fs.mkdir(storage.directory, { recursive: true }).catch(() => {});
@@ -64,7 +71,11 @@ async function loadSettings() {
 
 async function saveSettings() {
   await fs.mkdir(path.dirname(settingsPath()), { recursive: true });
-  await fs.writeFile(settingsPath(), JSON.stringify({ shortcuts, storage, startup, annotation, recent }, null, 2), 'utf8');
+  await fs.writeFile(settingsPath(), JSON.stringify({
+    shortcuts,
+    general:{startup:startup.openAtLogin,afterCopy:annotation.afterCopy,hideGrabbrDuringCapture:general.hideGrabbrDuringCapture},
+    capture:captureSettings, storage, editor:editorSettings, recent
+  }, null, 2), 'utf8');
 }
 
 async function recordLastSavedPath(filePath) {
@@ -80,6 +91,7 @@ function settingsSnapshot() {
     storage: { ...storage },
     startup: nativeStartupState(),
     annotation: { ...annotation }
+    ,general:{...general},capture:{...captureSettings},editor:{...editorSettings},recent:{...recent}
   };
 }
 
@@ -116,15 +128,16 @@ function applyStartupPreference(enabled) {
   }
 }
 
-async function writeUniqueImage(dataUrl, baseName, directory = storage.directory) {
+async function writeUniqueImage(dataUrl, baseName, directory = storage.directory, format=storage.format) {
   if (!directory) throw new Error('Er is geen opslagmap ingesteld.');
   await fs.mkdir(directory, { recursive: true });
   const image = nativeImage.createFromDataURL(dataUrl);
   if (image.isEmpty()) throw new Error('De screenshot kon niet als afbeelding worden verwerkt.');
-  const bytes = image.toPNG();
+  const bytes = format==='jpeg'?image.toJPEG(storage.jpegQuality):image.toPNG();
   const createdAt = new Date();
   for (let index = 1; index < 10000; index++) {
-    const filePath = path.join(directory, screenshotFilename(baseName, createdAt, index));
+    const filename=filenameForAttempt(storage.filenamePattern,{date:createdAt,type:baseName,format},index);
+    const filePath = path.join(directory, filename);
     try {
       await fs.writeFile(filePath, bytes, { flag: 'wx' });
       await recordLastSavedPath(filePath);
@@ -165,7 +178,7 @@ function windowOptions(title) {
 function createWindow() {
   mainWindow = new BrowserWindow(windowOptions('Grabbr'));
   mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'), { query: { mode: 'home' } });
-  mainWindow.setContentProtection(true);
+  mainWindow.setContentProtection(general.hideGrabbrDuringCapture);
   mainWindow.once('ready-to-show', () => mainWindow.show());
   mainWindow.on('close', event => {
     if (!app.isQuitting && tray) {
@@ -188,9 +201,10 @@ function createAnnotationWindow(payload) {
     name: payload.name || 'Grabbr screenshot',
     shadow: payload.shadow === true,
     autoSaveBaseName: payload.autoSaveBaseName || payload.name || 'Screenshot',
-    skipAutoSave: payload.skipAutoSave === true
+    skipAutoSave: payload.skipAutoSave === true,
+    coordinateSpace:payload.coordinateSpace||null
   });
-  win.setContentProtection(true);
+  win.setContentProtection(general.hideGrabbrDuringCapture);
   win.loadFile(path.join(__dirname, 'src', 'index.html'), { query: { mode: 'annotation' } });
   win.once('ready-to-show', () => { win.show(); win.focus(); });
   win.on('closed', () => {
@@ -234,15 +248,40 @@ function createTray() {
   if (isMac) sourceIcon.setTemplateImage(true);
   tray = new Tray(isMac ? sourceIcon : sourceIcon.resize({ width: 18, height: 18 }));
   tray.setToolTip('Grabbr');
+  refreshTrayMenu();
+  tray.on('double-click', () => showCapture('window'));
+}
+function trayMenuIcons(){
+  const result={};
+  for(const name of ['window','region','screen','settings','grabbr']){
+    const icon=nativeImage.createFromPath(path.join(__dirname,'assets','menu',`${name}.png`)).resize({width:16,height:16});
+    if(isMac) icon.setTemplateImage(true); result[name]=icon;
+  }
+  return result;
+}
+function openSettingsWindow(){
+  if(settingsWindow&&!settingsWindow.isDestroyed()){settingsWindow.show();settingsWindow.focus();settingsWindow.webContents.send('settings:open');return settingsWindow;}
+  settingsWindow=new BrowserWindow({...windowOptions('Grabbr — Instellingen'),width:820,height:680,minWidth:720,minHeight:580});
+  settingsWindow.setContentProtection(general.hideGrabbrDuringCapture);
+  settingsWindow.loadFile(path.join(__dirname,'src','index.html'),{query:{mode:'settings'}});
+  settingsWindow.once('ready-to-show',()=>{settingsWindow.show();settingsWindow.focus();settingsWindow.webContents.send('settings:open');});
+  settingsWindow.on('closed',()=>{settingsWindow=null;});return settingsWindow;
+}
+function refreshTrayMenu(){
+  if(!tray)return;
   tray.setContextMenu(Menu.buildFromTemplate(buildTrayTemplate(process.platform, {
     captureWindow: () => showCapture('window'),
     captureRegion: () => showCapture('region'),
     captureScreen: () => showCapture('screen'),
     openLastScreenshot: () => openLastScreenshot(),
+    openSettings:()=>openSettingsWindow(),
     openApp: () => { ensureMainWindow().show(); mainWindow.focus(); },
     quit: () => { app.isQuitting = true; app.quit(); }
-  })));
-  tray.on('double-click', () => showCapture('window'));
+  },{shortcuts,icons:trayMenuIcons()})));
+}
+
+function applyCaptureVisibilityProtection() {
+  for(const win of [mainWindow,settingsWindow,...annotationWindows.values()]) if(win&&!win.isDestroyed()) win.setContentProtection(general.hideGrabbrDuringCapture);
 }
 
 async function showLastScreenshotMessage(message) {
@@ -295,22 +334,28 @@ function registerShortcuts(next = shortcuts) {
     }
   }
   shortcuts = checked.settings;
+  refreshTrayMenu();
   return { ok: true, shortcuts: { ...shortcuts }, status: { ...shortcutStatus } };
 }
 
 function restoreRegionRequester() {
   const context = regionContext;
   regionContext = null;
-  if (context?.wasVisible && context.requester && !context.requester.isDestroyed()) {
-    context.requester.show(); context.requester.focus();
+  if(context?.hiddenWindows?.length){
+    for(const win of context.hiddenWindows) if(win&&!win.isDestroyed()) win.show();
   }
+  if (context?.wasVisible && context.requester && !context.requester.isDestroyed()) context.requester.focus();
 }
 
 async function beginRegionCapture(requester = activeGrabbrWindow()) {
   if (overlayWindow && !overlayWindow.isDestroyed()) { overlayWindow.focus(); return; }
   const targetDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-  regionContext = { requester, wasVisible: Boolean(requester?.isVisible()) };
-  requester?.hide();
+  const requesterWasVisible=Boolean(requester?.isVisible());
+  const hiddenWindows=[];
+  if(general.hideGrabbrDuringCapture){
+    for(const win of [mainWindow,settingsWindow,...annotationWindows.values()]) if(win&&!win.isDestroyed()&&win.isVisible()){hiddenWindows.push(win);win.hide();}
+  }
+  regionContext = { requester, wasVisible: requesterWasVisible, hiddenWindows };
   await new Promise(resolve => setTimeout(resolve, 160));
   const requestedWidth = Math.min(8192, Math.round(targetDisplay.bounds.width * targetDisplay.scaleFactor));
   const requestedHeight = Math.min(8192, Math.round(targetDisplay.bounds.height * targetDisplay.scaleFactor));
@@ -357,7 +402,7 @@ app.whenReady().then(async () => {
     if (!selection) { callback(null); return; }
     try {
       const sources = await desktopCapturer.getSources({ types: selection.kind === 'window' ? ['window'] : ['screen'], thumbnailSize: { width: 0, height: 0 } });
-      const source = sources.find(item => item.id === selection.id && !isOwnSourceName(item.name));
+      const source = sources.find(item => item.id === selection.id && (!general.hideGrabbrDuringCapture || !isOwnSourceName(item.name)));
       callback(source ? { video: source } : null);
     } catch (error) {
       console.error('Capturebron kon niet worden voorbereid:', error); callback(null);
@@ -390,6 +435,15 @@ ipcMain.handle('window:close-self', event => {
   lifecyclePolicy.markProgrammaticAnnotationClose();
   win.close(); return { ok: true };
 });
+ipcMain.handle('window:close-empty-home',event=>{
+  const win=BrowserWindow.fromWebContents(event.sender);
+  if(!win||win!==mainWindow)return {ok:false};
+  mainWindow=null;win.destroy();return {ok:true};
+});
+ipcMain.handle('window:minimize-self',event=>{
+  const win=BrowserWindow.fromWebContents(event.sender);if(!win||!annotationWindows.has(win))return{ok:false,reason:'Alleen een annotatievenster kan worden geminimaliseerd.'};
+  if(isMac)win.hide();else win.minimize();return{ok:true};
+});
 
 ipcMain.handle('settings:update-shortcuts', async (_event, next) => { const result = registerShortcuts(next); if (result.ok) { await saveSettings(); broadcastSettings(); } return result; });
 ipcMain.handle('settings:reset-shortcuts', async () => { const result = registerShortcuts({ ...DEFAULTS }); if (result.ok) { await saveSettings(); broadcastSettings(); } return result; });
@@ -418,21 +472,41 @@ ipcMain.handle('settings:update-annotation', async (_event, next) => {
   await saveSettings(); broadcastSettings();
   return { ok: true, annotation: { ...annotation } };
 });
+ipcMain.handle('settings:update-all',async(_event,next)=>{
+  const shortcutResult=registerShortcuts(next.shortcuts||shortcuts); if(!shortcutResult.ok)return shortcutResult;
+  const migrated=migrateSettings({...next,shortcuts:shortcutResult.shortcuts,recent},storage.directory);
+  const startupResult=applyStartupPreference(migrated.general.startup); if(!startupResult.ok)return startupResult;
+  shortcuts=migrated.shortcuts; general=migrated.general; captureSettings=migrated.capture; storage=migrated.storage; editorSettings=migrated.editor;
+  startup={openAtLogin:general.startup}; annotation={afterCopy:general.afterCopy};
+  applyCaptureVisibilityProtection(); await saveSettings(); broadcastSettings(); refreshTrayMenu();
+  return {ok:true,...settingsSnapshot()};
+});
 
 ipcMain.handle('capture:start-region', async event => {
   const requester = BrowserWindow.fromWebContents(event.sender) || activeGrabbrWindow();
   try { await beginRegionCapture(requester); return true; }
   catch (error) { restoreRegionRequester(); if (requester && !requester.isDestroyed()) { requester.show(); requester.focus(); } throw error; }
 });
-ipcMain.on('region:complete', (_event, dataUrl) => {
-  closeOverlay(); restoreRegionRequester();
-  createAnnotationWindow({ dataUrl, name: 'Grabbr gebied', shadow: false, autoSaveBaseName: 'Gebied' });
+ipcMain.handle('capture:hide-grabbr-windows',event=>{
+  if(!general.hideGrabbrDuringCapture)return {hidden:false};
+  const hidden=[];for(const win of [mainWindow,...annotationWindows.values()])if(win&&!win.isDestroyed()&&win.isVisible()){hidden.push(win);win.hide();}
+  captureHiddenWindows.set(event.sender.id,hidden);return {hidden:true};
+});
+ipcMain.handle('capture:restore-grabbr-windows',event=>{
+  const hidden=captureHiddenWindows.get(event.sender.id)||[];captureHiddenWindows.delete(event.sender.id);
+  for(const win of hidden)if(win&&!win.isDestroyed())win.show();return true;
+});
+ipcMain.on('region:complete',(_event,payload)=>{
+  closeOverlay();restoreRegionRequester();
+  createAnnotationWindow({dataUrl:payload.dataUrl,name:'Grabbr gebied',shadow:false,autoSaveBaseName:'Gebied',coordinateSpace:payload.coordinateSpace});
 });
 ipcMain.on('region:cancel', () => { closeOverlay(); restoreRegionRequester(); });
 
 ipcMain.handle('capture:list-sources', async (_event, kind = 'window') => {
   const sources = await desktopCapturer.getSources({ types: kind === 'window' ? ['window'] : ['screen'], thumbnailSize: { width: 640, height: 400 }, fetchWindowIcons: true });
-  return filterExternalSources(sources).map(source => ({ id: source.id, name: source.name || 'Naamloos venster', displayId: source.display_id || null, image: source.thumbnail.toDataURL(), size: source.thumbnail.getSize(), icon: source.appIcon && !source.appIcon.isEmpty() ? source.appIcon.toDataURL() : null }));
+  const displays=screen.getAllDisplays();const primary=screen.getPrimaryDisplay();
+  const visibleSources=general.hideGrabbrDuringCapture?filterExternalSources(sources):sources;
+  return visibleSources.map(source => {const display=displays.find(d=>String(d.id)===String(source.display_id))||primary;return { id: source.id, name: source.name || 'Naamloos venster', displayId: source.display_id || null, scaleFactor:display.scaleFactor||1,logicalDisplaySize:display.size,image: source.thumbnail.toDataURL(), size: source.thumbnail.getSize(), icon: source.appIcon && !source.appIcon.isEmpty() ? source.appIcon.toDataURL() : null };});
 });
 ipcMain.handle('capture:prepare', (_event, { id, kind = 'window' }) => { pendingCapture = { id, kind }; return true; });
 ipcMain.handle('capture:get-source-image', async (_event, { id, kind = 'window' }) => {
@@ -440,7 +514,7 @@ ipcMain.handle('capture:get-source-image', async (_event, { id, kind = 'window' 
   const maxWidth = Math.min(8192, Math.max(2560, ...displays.map(d => Math.round(d.size.width * d.scaleFactor))));
   const maxHeight = Math.min(8192, Math.max(1440, ...displays.map(d => Math.round(d.size.height * d.scaleFactor))));
   const sources = await desktopCapturer.getSources({ types: kind === 'window' ? ['window'] : ['screen'], thumbnailSize: { width: maxWidth, height: maxHeight }, fetchWindowIcons: false });
-  const source = sources.find(item => item.id === id && !isOwnSourceName(item.name));
+  const source = sources.find(item => item.id === id && (!general.hideGrabbrDuringCapture || !isOwnSourceName(item.name)));
   if (!source || source.thumbnail.isEmpty()) throw new Error('De geselecteerde bron is niet meer beschikbaar.');
   return source.thumbnail.toDataURL();
 });
@@ -451,17 +525,17 @@ ipcMain.handle('clipboard:write-png', async (_event, payload) => writePngToSyste
   platform: process.platform,
   electronVersion: process.versions.electron || null,
   nodeVersion: process.versions.node || null,
-  closeAfterCopy: annotation.closeAfterCopy === true
+  afterCopy:annotation.afterCopy||'copy'
 }));
-ipcMain.handle('image:auto-save', async (_event, { dataUrl, baseName = 'Screenshot' }) => {
+ipcMain.handle('image:auto-save', async (_event, { dataUrl, baseName = 'Screenshot', format=storage.format }) => {
   if (!storage.autoSave) return { saved: false, disabled: true };
-  return { saved: true, filePath: await writeUniqueImage(dataUrl, baseName, storage.directory) };
+  return { saved: true, filePath: await writeUniqueImage(dataUrl, baseName, storage.directory,format) };
 });
 ipcMain.handle('image:save', async (event, { dataUrl, suggestedName = 'Grabbr.png', format = 'png' }) => {
   const extension = format === 'jpeg' ? 'jpg' : 'png';
   const parent = BrowserWindow.fromWebContents(event.sender) || mainWindow;
   const result = await dialog.showSaveDialog(parent, {
-    title: 'Screenshot opslaan', defaultPath: path.join(storage.directory || app.getPath('pictures'), suggestedName.replace(/\.(png|jpe?g)$/i, `.${extension}`)),
+    title: 'Screenshot opslaan', defaultPath: path.join(storage.directory || app.getPath('pictures'), filenameFromPattern(storage.filenamePattern,{date:new Date(),type:suggestedName.replace(/\.(png|jpe?g)$/i,''),counter:1,format})),
     filters: format === 'jpeg' ? [{ name: 'JPEG-afbeelding', extensions: ['jpg', 'jpeg'] }] : [{ name: 'PNG-afbeelding', extensions: ['png'] }]
   });
   if (result.canceled || !result.filePath) return { canceled: true };

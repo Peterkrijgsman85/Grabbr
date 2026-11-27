@@ -8,6 +8,6 @@ contextBridge.exposeInMainWorld('grabbrOverlay', {
     ipcRenderer.on('region:initialize', listener);
     return () => ipcRenderer.removeListener('region:initialize', listener);
   },
-  complete: dataUrl => ipcRenderer.send('region:complete', dataUrl),
+  complete: payload => ipcRenderer.send('region:complete', payload),
   cancel: () => ipcRenderer.send('region:cancel')
 });

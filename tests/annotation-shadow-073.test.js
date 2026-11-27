@@ -1,0 +1,4 @@
+const test=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs');const path=require('node:path');const root=path.join(__dirname,'..');const engine=fs.readFileSync(path.join(root,'src/canvas-engine.js'),'utf8');const renderer=fs.readFileSync(path.join(root,'src/renderer.js'),'utf8');
+test('nieuwe annotatieschaduw staat standaard uit en wordt per annotatie opgeslagen',()=>{assert.match(engine,/annotationShadow: false/);assert.match(engine,/annotationShadow: M\.supportsAnnotationShadow/);assert.match(engine,/item\.annotationShadow && M\.supportsAnnotationShadow/);});
+test('blur en pixelate krijgen nooit annotatieschaduwoptie',()=>{assert.match(renderer,/supportsAnnotationShadow\(item\)/);assert.match(renderer,/annotationShadowRow/);});
+test('annotatieschaduwproperty commit naar undo history',()=>{assert.match(renderer,/applySelectedProperties\(\{annotationShadow:e\.target\.checked\},true\)/);});

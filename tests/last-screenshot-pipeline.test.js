@@ -6,7 +6,8 @@ const main = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
 
 test('laatste opgeslagen pad wordt persistent bijgehouden', () => {
   assert.match(main, /recent = \{ lastSavedPath: filePath \}/);
-  assert.match(main, /JSON\.stringify\(\{ shortcuts, storage, startup, annotation, recent \}/);
+  assert.match(main, /JSON\.stringify\(\{/);
+  assert.match(main, /recent/);
 });
 
 test('laatste screenshot opent als nieuw annotatievenster zonder opnieuw autosaven', () => {

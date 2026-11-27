@@ -3,6 +3,7 @@
 
   const M = window.GrabbrModel;
   const O = window.GrabbrObscureRender;
+  const S = window.GrabbrCoordinateSpace;
   const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 
   class CanvasEngine {
@@ -11,12 +12,13 @@
       this.ctx = canvas.getContext('2d', { willReadFrequently: true });
       this.callbacks = callbacks;
       this.image = null;
+      this.space = null;
       this.baseDataUrl = null;
       this.name = 'Grabbr';
       this.annotations = [];
       this.selectedIndex = -1;
       this.tool = 'select';
-      this.style = { color: '#765cff', width: 7, fontSize: 28 };
+      this.style = { color: '#765cff', width: 7, fontSize: 28, stepSize: 44, annotationShadow: false };
       this.shadow = { enabled: true };
       this.margin = 0;
       this.draft = null;
@@ -44,6 +46,7 @@
       this.stepCounter = 1;
       if (typeof options.shadow === 'boolean') this.shadow.enabled = options.shadow;
       await this.loadBaseImage(dataUrl);
+      this.space=S.createDocumentSpace(this.image.naturalWidth,this.image.naturalHeight,options.coordinateSpace||options);
       this.render();
     }
 
@@ -61,6 +64,8 @@
       return 70;
     }
 
+    displayDimensions(zoom=1){return S.displaySize(this.space,this.getMargin(),zoom);}
+
     setTool(tool) {
       this.tool = tool;
       this.draft = null;
@@ -70,6 +75,12 @@
     }
 
     setStyle(next) { Object.assign(this.style, next); }
+    configureDefaults(next={}) {
+      if (Number.isFinite(next.strokeWidth)) this.style.width=next.strokeWidth;
+      if (Number.isFinite(next.fontSize)) this.style.fontSize=next.fontSize;
+      if (Number.isFinite(next.stepSize)) this.style.stepSize=next.stepSize;
+      if (typeof next.annotationShadow==='boolean') this.style.annotationShadow=next.annotationShadow;
+    }
     setShadowEnabled(enabled, commit = true) {
       if (this.shadow.enabled === Boolean(enabled)) return false;
       this.shadow.enabled = Boolean(enabled);
@@ -94,6 +105,11 @@
       if (next.color && item.color !== next.color) { item.color = next.color; changed = true; }
       if (Number.isFinite(next.width) && M.supportsStrokeWidth(item) && item.width !== next.width) { item.width = next.width; changed = true; }
       if (Number.isFinite(next.fontSize) && M.supportsFontSize(item) && item.fontSize !== next.fontSize) { item.fontSize = next.fontSize; item.width = 0; changed = true; }
+      if (Number.isFinite(next.stepSize) && item.type==='step') {
+        const radius=Math.max(.5,next.stepSize/2);
+        if(item.radius!==radius){ item.radius=radius; item.fontSize=Math.max(1,radius*1.15); changed=true; }
+      }
+      if (typeof next.annotationShadow==='boolean' && M.supportsAnnotationShadow(item) && item.annotationShadow!==next.annotationShadow) { item.annotationShadow=next.annotationShadow; changed=true; }
       if (!changed) return false;
       this.render(); this.notifySelection();
       if (commit) this.callbacks.onCommit?.();
@@ -115,10 +131,11 @@
     }
 
     scene() {
-      return { baseDataUrl: this.baseDataUrl, annotations: M.deepClone(this.annotations), shadow: { enabled: this.shadow.enabled }, stepCounter: this.stepCounter };
+      return { coordinateVersion:2,coordinateSpace:M.deepClone(this.space),baseDataUrl: this.baseDataUrl, annotations: M.deepClone(this.annotations), shadow: { enabled: this.shadow.enabled }, stepCounter: this.stepCounter };
     }
 
     async restoreScene(scene) {
+      scene=S.normalizeLegacyScene(scene,this.space);
       if (scene.baseDataUrl && scene.baseDataUrl !== this.baseDataUrl) {
         this.baseDataUrl = scene.baseDataUrl;
         await this.loadBaseImage(this.baseDataUrl);
@@ -131,13 +148,13 @@
       this.notifySelection();
     }
 
-    dimensions() { return this.image ? { width: this.image.naturalWidth, height: this.image.naturalHeight } : null; }
+    dimensions() { return this.image ? { width: this.space.logicalWidth, height: this.space.logicalHeight,bitmapWidth:this.image.naturalWidth,bitmapHeight:this.image.naturalHeight } : null; }
 
     resizeCanvas() {
       if (!this.image) return;
       this.margin = this.getMargin();
-      const width = this.image.naturalWidth + this.margin * 2;
-      const height = this.image.naturalHeight + this.margin * 2;
+      const width = Math.ceil(this.space.bitmapWidth + this.margin * this.space.scaleX * 2);
+      const height = Math.ceil(this.space.bitmapHeight + this.margin * this.space.scaleY * 2);
       if (this.canvas.width !== width || this.canvas.height !== height) {
         this.canvas.width = width;
         this.canvas.height = height;
@@ -148,15 +165,16 @@
       if (!this.image) return;
       this.resizeCanvas();
       const ctx = this.ctx;
-      ctx.save();
+      ctx.save();ctx.setTransform(1,0,0,1,0,0);
       ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      ctx.setTransform(this.space.scaleX,0,0,this.space.scaleY,this.margin*this.space.scaleX,this.margin*this.space.scaleY);
       if (this.shadow.enabled) {
         ctx.shadowColor = 'rgba(0,0,0,.35)';
         ctx.shadowBlur = 32;
         ctx.shadowOffsetX = 0;
         ctx.shadowOffsetY = 14;
       }
-      ctx.drawImage(this.image, this.margin, this.margin);
+      ctx.drawImage(this.image,0,0,this.space.logicalWidth,this.space.logicalHeight);
       ctx.shadowColor = 'transparent';
       for (const item of this.annotations) this.drawAnnotation(item, ctx);
       if (this.draft) this.drawAnnotation(this.draft, ctx);
@@ -169,20 +187,20 @@
 
     docPoint(event) {
       const rect = this.canvas.getBoundingClientRect();
-      return M.mapClientToDocument({ x: event.clientX, y: event.clientY }, rect, { width: this.canvas.width, height: this.canvas.height }, this.margin);
+      return S.clientToLogical({x:event.clientX,y:event.clientY},rect,this.space,this.margin);
     }
 
     boundedPoint(point) {
-      return { x: clamp(point.x, 0, this.image.naturalWidth), y: clamp(point.y, 0, this.image.naturalHeight) };
+      return { x: clamp(point.x, 0, this.space.logicalWidth), y: clamp(point.y, 0, this.space.logicalHeight) };
     }
 
     visualScale() {
       const rect = this.canvas.getBoundingClientRect();
-      return rect.width > 0 ? this.canvas.width / rect.width : 1;
+      return rect.width > 0 ? (this.space.logicalWidth+this.margin*2) / rect.width : 1;
     }
 
     baseItem(type, p) {
-      return { id: crypto.randomUUID(), type, x1: p.x, y1: p.y, x2: p.x, y2: p.y, color: this.style.color, width: this.style.width, fontSize: this.style.fontSize };
+      return { id: crypto.randomUUID(), type, x1: p.x, y1: p.y, x2: p.x, y2: p.y, color: this.style.color, width: this.style.width, fontSize: this.style.fontSize, annotationShadow: M.supportsAnnotationShadow({type}) ? this.style.annotationShadow : false };
     }
 
     pointerDown(event) {
@@ -208,7 +226,7 @@
       if (this.tool === 'text') {
         this.callbacks.onTextRequest?.(point, text => {
           if (!text.trim()) return;
-          this.annotations.push({ id: crypto.randomUUID(), type: 'text', x: point.x, y: point.y, text: text.trim(), color: this.style.color, fontSize: this.style.fontSize, width: 0 });
+          this.annotations.push({ id: crypto.randomUUID(), type: 'text', x: point.x, y: point.y, text: text.trim(), color: this.style.color, fontSize: this.style.fontSize, width: 0, annotationShadow:this.style.annotationShadow });
           this.selectedIndex = this.annotations.length - 1;
           this.callbacks.onCommit?.();
           this.render();
@@ -217,7 +235,8 @@
         return;
       }
       if (this.tool === 'step') {
-        this.annotations.push({ id: crypto.randomUUID(), type: 'step', x: point.x, y: point.y, number: this.stepCounter++, radius: Math.max(14, this.style.fontSize * .58), color: this.style.color, fontSize: this.style.fontSize });
+        const radius=Math.max(.5,this.style.stepSize/2);
+        this.annotations.push({ id: crypto.randomUUID(), type: 'step', x: point.x, y: point.y, number: this.stepCounter++, radius, color: this.style.color, fontSize: Math.max(1,radius*1.15), annotationShadow:this.style.annotationShadow });
         this.selectedIndex = this.annotations.length - 1;
         this.callbacks.onCommit?.();
         this.render();
@@ -244,6 +263,7 @@
       if (this.tool === 'select' && this.selectedIndex >= 0 && this.drag.original) {
         if (this.drag.action === 'resize') {
           this.annotations[this.selectedIndex] = M.resizeAnnotation(this.drag.original, this.drag.handle, point, 10);
+          this.notifySelection();
         } else {
           const dx = point.x - this.drag.start.x, dy = point.y - this.drag.start.y;
           this.annotations[this.selectedIndex] = M.translateAnnotation(this.drag.original, dx, dy);
@@ -301,16 +321,18 @@
     async applyCrop() {
       if (!this.cropRect || this.cropRect.width < 4 || this.cropRect.height < 4) return false;
       const r = {
-        x: Math.floor(clamp(this.cropRect.x, 0, this.image.naturalWidth - 1)),
-        y: Math.floor(clamp(this.cropRect.y, 0, this.image.naturalHeight - 1)),
-        width: Math.floor(clamp(this.cropRect.width, 1, this.image.naturalWidth - this.cropRect.x)),
-        height: Math.floor(clamp(this.cropRect.height, 1, this.image.naturalHeight - this.cropRect.y))
+        x: clamp(this.cropRect.x, 0, this.space.logicalWidth - 1),
+        y: clamp(this.cropRect.y, 0, this.space.logicalHeight - 1),
+        width: clamp(this.cropRect.width, 1, this.space.logicalWidth - this.cropRect.x),
+        height: clamp(this.cropRect.height, 1, this.space.logicalHeight - this.cropRect.y)
       };
+      const source=S.logicalRectToBitmap(r,this.space);
       const temp = document.createElement('canvas');
-      temp.width = r.width; temp.height = r.height;
-      temp.getContext('2d').drawImage(this.image, r.x, r.y, r.width, r.height, 0, 0, r.width, r.height);
+      temp.width=Math.round(source.width);temp.height=Math.round(source.height);
+      temp.getContext('2d').drawImage(this.image,source.x,source.y,source.width,source.height,0,0,temp.width,temp.height);
       this.baseDataUrl = temp.toDataURL('image/png');
       await this.loadBaseImage(this.baseDataUrl);
+      this.space=S.createDocumentSpace(this.image.naturalWidth,this.image.naturalHeight,{logicalWidth:r.width,logicalHeight:r.height});
       this.annotations = this.annotations
         .filter(item => {
           const b = M.annotationBounds(item);
@@ -332,8 +354,11 @@
       ctx.strokeStyle = item.color || '#ff3b5c';
       ctx.fillStyle = item.color || '#ff3b5c';
       ctx.lineWidth = item.width || 5;
-      const ox = this.margin, oy = this.margin;
+      const ox = 0, oy = 0;
       const x1 = (item.x1 ?? 0) + ox, y1 = (item.y1 ?? 0) + oy, x2 = (item.x2 ?? 0) + ox, y2 = (item.y2 ?? 0) + oy;
+      if (item.annotationShadow && M.supportsAnnotationShadow(item)) {
+        ctx.shadowColor='rgba(0,0,0,.32)'; ctx.shadowBlur=Math.max(4,(item.width||item.fontSize||6)*.8); ctx.shadowOffsetX=2; ctx.shadowOffsetY=3;
+      }
       if (item.type === 'pen') {
         if (item.points.length > 1) {
           ctx.beginPath(); ctx.moveTo(item.points[0].x + ox, item.points[0].y + oy);
@@ -380,7 +405,8 @@
     }
 
     drawObscure(type, rect, ctx) {
-      const plan = O.obscureRenderPlan(type, rect, this.margin, { width: this.image.naturalWidth, height: this.image.naturalHeight });
+      const bitmapRect=S.logicalRectToBitmap(rect,this.space);
+      const plan = O.obscureRenderPlan(type, bitmapRect, 0, { width: this.image.naturalWidth, height: this.image.naturalHeight });
       if (!plan) return;
       ctx.save();
       ctx.beginPath();
@@ -404,7 +430,7 @@
         ctx.drawImage(
           filtered,
           plan.cropInExpanded.x, plan.cropInExpanded.y, plan.cropInExpanded.width, plan.cropInExpanded.height,
-          plan.destination.x, plan.destination.y, plan.destination.width, plan.destination.height
+          rect.x,rect.y,rect.width,rect.height
         );
       } else {
         const small = document.createElement('canvas');
@@ -415,7 +441,7 @@
           0, 0, small.width, small.height
         );
         ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(small, 0, 0, small.width, small.height, plan.destination.x, plan.destination.y, plan.destination.width, plan.destination.height);
+        ctx.drawImage(small, 0, 0, small.width, small.height, rect.x,rect.y,rect.width,rect.height);
         ctx.imageSmoothingEnabled = true;
       }
       ctx.restore();
@@ -473,46 +499,45 @@
       const handles = M.resizeHandles(item);
       ctx.save(); ctx.setLineDash([5 * scale, 4 * scale]); ctx.lineWidth = 1.25 * scale; ctx.strokeStyle = '#8d79ff';
       if (item.type === 'arrow' || item.type === 'line') {
-        ctx.beginPath(); ctx.moveTo(item.x1 + this.margin, item.y1 + this.margin); ctx.lineTo(item.x2 + this.margin, item.y2 + this.margin); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(item.x1, item.y1); ctx.lineTo(item.x2, item.y2); ctx.stroke();
       } else {
-        ctx.strokeRect(b.x + this.margin - p, b.y + this.margin - p, Math.max(1, b.width + p * 2), Math.max(1, b.height + p * 2));
+        ctx.strokeRect(b.x-p,b.y-p,Math.max(1,b.width+p*2),Math.max(1,b.height+p*2));
       }
       ctx.setLineDash([]);
       if (handles.length) {
         handles.forEach(handle => {
           ctx.beginPath();
-          ctx.arc(handle.x + this.margin, handle.y + this.margin, 6 * scale, 0, Math.PI * 2);
+          ctx.arc(handle.x,handle.y,6*scale,0,Math.PI*2);
           ctx.fillStyle = '#ffffff'; ctx.fill();
           ctx.lineWidth = 2 * scale; ctx.strokeStyle = '#765cff'; ctx.stroke();
         });
       } else {
         ctx.fillStyle = '#fff';
-        [[b.x-p,b.y-p],[b.x+b.width+p,b.y-p],[b.x-p,b.y+b.height+p],[b.x+b.width+p,b.y+b.height+p]].forEach(([x,y]) => { ctx.beginPath(); ctx.arc(x + this.margin, y + this.margin, 3.5 * scale, 0, Math.PI*2); ctx.fill(); });
+        [[b.x-p,b.y-p],[b.x+b.width+p,b.y-p],[b.x-p,b.y+b.height+p],[b.x+b.width+p,b.y+b.height+p]].forEach(([x,y])=>{ctx.beginPath();ctx.arc(x,y,3.5*scale,0,Math.PI*2);ctx.fill();});
       }
       ctx.restore();
     }
 
     drawCropOverlay(rect, ctx) {
-      const r = { x: rect.x + this.margin, y: rect.y + this.margin, width: rect.width, height: rect.height };
+      const r = {x:rect.x,y:rect.y,width:rect.width,height:rect.height};
       ctx.save(); ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.beginPath();
-      ctx.rect(this.margin, this.margin, this.image.naturalWidth, this.image.naturalHeight);
+      ctx.rect(0,0,this.space.logicalWidth,this.space.logicalHeight);
       ctx.rect(r.x, r.y, r.width, r.height); ctx.fill('evenodd');
       ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.setLineDash([7,5]); ctx.strokeRect(r.x, r.y, r.width, r.height);
       ctx.setLineDash([]); ctx.fillStyle = 'rgba(15,17,23,.85)';
       const label = `${Math.round(r.width)} × ${Math.round(r.height)}`; ctx.font = '12px sans-serif';
-      const tw = ctx.measureText(label).width + 14; ctx.fillRect(r.x, Math.max(this.margin, r.y - 25), tw, 21); ctx.fillStyle = '#fff'; ctx.fillText(label, r.x + 7, Math.max(this.margin + 14, r.y - 10));
+      const tw=ctx.measureText(label).width+14;ctx.fillRect(r.x,Math.max(0,r.y-25),tw,21);ctx.fillStyle='#fff';ctx.fillText(label,r.x+7,Math.max(14,r.y-10));
       ctx.restore();
     }
 
-    exportDataUrl(format = 'png') {
+    exportDataUrl(format = 'png', quality = .92) {
       this.render(true);
       let outputCanvas = this.canvas;
       if (format === 'jpeg') {
-        if (this.shadow.enabled) throw new Error('JPEG ondersteunt geen transparante schaduw. Schakel de schaduw uit of kies PNG.');
         const flat = document.createElement('canvas'); flat.width = this.canvas.width; flat.height = this.canvas.height;
         const fctx = flat.getContext('2d'); fctx.fillStyle = '#fff'; fctx.fillRect(0, 0, flat.width, flat.height); fctx.drawImage(this.canvas, 0, 0); outputCanvas = flat;
       }
-      const data = outputCanvas.toDataURL(format === 'jpeg' ? 'image/jpeg' : 'image/png', .92);
+      const data = outputCanvas.toDataURL(format === 'jpeg' ? 'image/jpeg' : 'image/png', quality);
       this.render(false);
       return data;
     }

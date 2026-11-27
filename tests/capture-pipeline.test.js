@@ -9,7 +9,7 @@ const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
 
 test('window capture gebruikt de cursorvrije native snapshot vóór de streamfallback', () => {
   const windowGuard = renderer.indexOf("if (sourceKind === 'window')");
-  const snapshotCall = renderer.indexOf("getSourceImage(source.id, 'window')");
+  const snapshotCall = renderer.indexOf("getSourceImage(source.id,'window')");
   const streamCall = renderer.indexOf('getDisplayMedia(GrabbrCapturePolicy.mediaConstraints(sourceKind))');
   assert.ok(windowGuard >= 0 && snapshotCall > windowGuard && streamCall > snapshotCall);
 });
@@ -21,7 +21,7 @@ test('streamfallback past cursor never toe vóór het videoframe', () => {
 });
 
 test('editor en selectie-overlay gebruiken native content protection', () => {
-  assert.match(main, /mainWindow\.setContentProtection\(true\)/);
+  assert.match(main, /mainWindow\.setContentProtection\(general\.hideGrabbrDuringCapture\)/);
   assert.match(main, /overlayWindow\.setContentProtection\(true\)/);
   assert.match(main, /title: 'Grabbr selectie'/);
 });

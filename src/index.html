@@ -87,25 +87,15 @@
             <button data-color="#15171e" aria-label="Zwart"></button>
             <input id="customColor" type="color" value="#765cff" title="Eigen kleur" />
           </div>
-          <label for="strokeWidth">Lijndikte <output id="strokeOutput">7 px</output></label>
-          <input id="strokeWidth" type="range" min="2" max="24" value="7" />
-          <label for="fontSize">Tekstgrootte <output id="fontOutput">28 px</output></label>
-          <input id="fontSize" type="range" min="14" max="72" value="28" />
-        </section>
-        <section class="shadow-section">
-          <div class="section-title-row"><h2>Vensterschaduw</h2><label class="switch"><input id="shadowEnabled" type="checkbox" checked /><span></span></label></div>
-          <p class="setting-note">Transparante alpha-schaduw. Voor export met schaduw wordt PNG gebruikt.</p>
-        </section>
-        <section>
-          <h2>Uitvoer</h2>
-          <label for="formatSelect">Bestandsformaat</label>
-          <select id="formatSelect"><option value="png">PNG (transparant)</option><option value="jpeg">JPEG</option></select>
+          <label for="strokeWidth">Lijndikte</label><div class="range-value-row"><input id="strokeWidth" type="range" min="5" max="50" value="7" /><button id="strokeOutput" class="numeric-value" type="button">7 px</button><input id="strokeManual" class="numeric-manual hidden" type="number" min="1" max="200" /></div>
+          <label for="fontSize">Tekstgrootte</label><div class="range-value-row"><input id="fontSize" type="range" min="8" max="100" value="28" /><button id="fontOutput" class="numeric-value" type="button">28 px</button><input id="fontManual" class="numeric-manual hidden" type="number" min="1" max="200" /></div>
+          <label for="stepSize">Stapgrootte</label><div class="range-value-row"><input id="stepSize" type="range" min="20" max="100" value="44" /><button id="stepOutput" class="numeric-value" type="button">44 px</button><input id="stepManual" class="numeric-manual hidden" type="number" min="1" max="200" /></div>
         </section>
         <section id="selectionPanel" class="hidden">
           <h2>Selectie</h2>
+          <label id="annotationShadowRow" class="check-row hidden"><input id="annotationShadow" type="checkbox" /> Schaduw</label>
           <button id="deleteSelection" class="danger wide">Verwijderen</button>
         </section>
-        <div class="privacy-note"><strong>Geen uploads.</strong> Grabbr heeft geen account of cloudverbinding nodig.</div>
       </aside>
     </main>
 
@@ -139,11 +129,20 @@
         <div><h2 id="settingsTitle">Instellingen</h2><p>Pas algemeen gedrag, sneltoetsen en opslag aan.</p></div>
         <button type="button" id="closeSettings" class="icon-btn">×</button>
       </div>
-      <div class="settings-content">
-        <h3 class="settings-section-title">Algemeen</h3>
-        <label class="storage-toggle startup-toggle"><input id="startupEnabled" type="checkbox" /><span><strong>Start met besturingssysteem</strong><small>Start Grabbr automatisch nadat je bent ingelogd op macOS of Windows.</small></span></label>
-        <label class="storage-toggle"><input id="closeAfterCopy" type="checkbox" /><span><strong>Annotatievenster sluiten na kopiëren</strong><small>Sluit alleen het betreffende annotatievenster nadat de volledige afbeelding succesvol op het klembord is bevestigd.</small></span></label>
-        <h3 class="settings-section-title">Globale sneltoetsen</h3>
+      <div class="settings-layout"><nav class="settings-nav"><button type="button" class="active" data-settings-target="general">Algemeen</button><button type="button" data-settings-target="capture">Vastleggen</button><button type="button" data-settings-target="shortcuts">Sneltoetsen</button><button type="button" data-settings-target="editor">Editor</button></nav><div class="settings-content">
+        <section class="settings-panel active" data-settings-panel="general"><h3>Algemeen</h3>
+        <label class="storage-toggle startup-toggle"><input id="startupEnabled" type="checkbox" /><span><strong>Start met besturingssysteem</strong><small>Start Grabbr automatisch na inloggen.</small></span></label>
+        <label for="afterCopy">Na kopiëren</label><select id="afterCopy"><option value="copy">Alleen kopiëren</option><option value="close">Kopiëren en sluiten</option><option value="minimize">Kopiëren en minimaliseren</option></select>
+        <label class="storage-toggle"><input id="hideGrabbrDuringCapture" type="checkbox" checked /><span><strong>Grabbr-vensters verbergen tijdens vastleggen</strong><small>Uitgeschakeld blijven Grabbr-vensters zichtbaar en selecteerbaar.</small></span></label></section>
+        <section class="settings-panel" data-settings-panel="capture"><h3>Vastleggen</h3>
+        <label class="storage-toggle"><input id="captureShadowEnabled" type="checkbox" checked /><span><strong>Vensterschaduw</strong><small>Transparante schaduw rond window captures.</small></span></label>
+        <label class="storage-toggle"><input id="autoSaveEnabled" type="checkbox" checked /><span><strong>Automatisch opslaan</strong><small>Bewaar iedere nieuwe capture.</small></span></label>
+        <label class="storage-label" for="storageDirectory">Opslagmap</label><div class="storage-picker"><input id="storageDirectory" type="text" readonly /><button id="chooseStorageDirectory" type="button">Kies map…</button></div>
+        <label class="storage-label" for="filenamePattern">Bestandsnaampatroon</label><input id="filenamePattern" class="settings-text-input" type="text" /><small>Tokens: {date} {time} {year} {month} {day} {hour} {minute} {second} {type} {counter}</small><div class="filename-preview">Voorbeeld: <strong id="filenamePreview"></strong></div>
+        <label class="storage-label" for="outputFormat">Uitvoerformaat</label><select id="outputFormat"><option value="png">PNG</option><option value="jpeg">JPEG</option></select>
+        <div id="jpegQualityRow" class="hidden"><label for="jpegQuality">JPEG-kwaliteit</label><div class="range-value-row"><input id="jpegQuality" type="range" min="1" max="100" value="90" /><span id="jpegQualityValue">90%</span></div></div>
+        </section>
+        <section class="settings-panel" data-settings-panel="shortcuts"><h3>Sneltoetsen</h3>
         <div class="hotkey-row">
           <div><strong>Venster vastleggen</strong><small>Open de kiezer voor applicatievensters.</small></div>
           <input id="hotkeyWindow" class="hotkey-input" type="text" readonly aria-label="Sneltoets voor venster vastleggen" />
@@ -157,16 +156,15 @@
           <input id="hotkeyScreen" class="hotkey-input" type="text" readonly aria-label="Sneltoets voor scherm vastleggen" />
         </div>
         <p class="hotkey-help">Klik in een veld en druk de gewenste toetsencombinatie in. Gebruik minimaal één modificatietoets, bijvoorbeeld Ctrl, Alt, Shift of Command.</p>
-        <h3 class="settings-section-title storage-title">Opslaan</h3>
-        <label class="storage-toggle"><input id="autoSaveEnabled" type="checkbox" checked /><span><strong>Nieuwe screenshots automatisch opslaan</strong><small>Bewaar iedere nieuwe capture direct als uniek PNG-bestand.</small></span></label>
-        <label class="storage-label" for="storageDirectory">Standaard opslagmap</label>
-        <div class="storage-picker">
-          <input id="storageDirectory" type="text" readonly aria-label="Standaard opslagmap" />
-          <button id="chooseStorageDirectory" type="button">Kies map…</button>
-        </div>
-        <p class="hotkey-help">Bestanden krijgen een datum, tijd en bronnaam. Bestaande bestanden worden nooit stil overschreven.</p>
+        </section>
+        <section class="settings-panel" data-settings-panel="editor"><h3>Editor</h3>
+        <label for="defaultStrokeWidth">Standaard lijndikte</label><div class="range-value-row"><input id="defaultStrokeWidth" type="range" min="5" max="50" /><button id="defaultStrokeValue" type="button" class="numeric-value"></button><input id="defaultStrokeManual" class="numeric-manual hidden" type="number" min="1" max="200" /></div>
+        <label for="defaultFontSize">Standaard tekstgrootte</label><div class="range-value-row"><input id="defaultFontSize" type="range" min="8" max="100" /><button id="defaultFontValue" type="button" class="numeric-value"></button><input id="defaultFontManual" class="numeric-manual hidden" type="number" min="1" max="200" /></div>
+        <label for="defaultStepSize">Standaard stapgrootte</label><div class="range-value-row"><input id="defaultStepSize" type="range" min="20" max="100" /><button id="defaultStepValue" type="button" class="numeric-value"></button><input id="defaultStepManual" class="numeric-manual hidden" type="number" min="1" max="200" /></div>
+        <label class="storage-toggle"><input id="defaultAnnotationShadow" type="checkbox" /><span><strong>Standaard annotatieschaduw</strong><small>Voor pijl, lijn, kader, ellips, tekst en stapnummer.</small></span></label>
+        </section>
         <div id="settingsError" class="settings-error hidden"></div>
-      </div>
+      </div></div>
       <div class="settings-actions">
         <button type="button" id="resetHotkeys">Herstel standaard</button>
         <span></span>
@@ -178,7 +176,10 @@
 
   <div id="toast" class="toast hidden"></div>
 
+  <script src="coordinate-space.js"></script>
   <script src="model.js"></script>
+  <script src="numeric-values.js"></script>
+  <script src="filename-pattern.js"></script>
   <script src="hotkeys.js"></script>
   <script src="capture-policy.js"></script>
   <script src="obscure-render.js"></script>

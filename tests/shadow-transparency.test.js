@@ -13,11 +13,12 @@ test('schaduw heeft alleen een aan-uitstatus en vaste alpha-rendering', () => {
 });
 
 test('schaduw-UI toont geen zichtbare detailparameters of witte achtergrond', () => {
-  assert.match(html, /id="shadowEnabled"/);
+  assert.match(html, /id="captureShadowEnabled"/);
   assert.doesNotMatch(html, /shadowBlur|shadowOffset|shadowOpacity|whiteBackground/);
 });
 
-test('JPEG wordt geweigerd zolang transparante schaduw actief is', () => {
-  assert.match(engine, /JPEG ondersteunt geen transparante schaduw/);
+test('JPEG krijgt een vaste witte achtergrond en PNG behoudt alpha', () => {
   assert.match(engine, /if \(format === 'jpeg'\)/);
+  assert.match(engine, /fillStyle = '#fff'/);
+  assert.doesNotMatch(engine, /JPEG ondersteunt geen transparante schaduw/);
 });

@@ -8,7 +8,7 @@ test('blur en pixelate worden iedere render opnieuw uit de originele this.image 
   const start = engine.indexOf('drawObscure(type, rect, ctx)');
   const end = engine.indexOf('contrastColor(hex)', start);
   const body = engine.slice(start, end);
-  assert.match(body, /obscureRenderPlan\(type, rect, this\.margin/);
+  assert.match(body, /logicalRectToBitmap\(rect,this\.space\)/);
   assert.match(body, /drawImage\(\s*this\.image,/);
   assert.doesNotMatch(body, /drawImage\(this\.canvas|snapshot|getImageData/);
 });

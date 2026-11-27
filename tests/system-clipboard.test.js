@@ -19,7 +19,7 @@ function dependencies(options = {}) {
       readImage() { return confirmed; }
     },
     nativeImage: { createFromBuffer: options.createFromBuffer || (() => image()) },
-    closeAfterCopy: options.closeAfterCopy === true
+    afterCopy: options.afterCopy || 'copy'
   };
 }
 
@@ -28,7 +28,7 @@ test('geldige PNG bereikt uitsluitend de Electron main-process writeImage API', 
   const result = await writePngToSystemClipboard(new Uint8Array(png), { ...deps, platform: 'darwin' });
   assert.equal(result.ok, true);
   assert.equal(result.method, 'Electron main clipboard.writeImage');
-  assert.equal(result.closeAfterCopy, false);
+  assert.equal(result.afterCopy, 'copy');
   assert.equal(deps.written.length, 1);
   assert.equal(typeof deps.electronClipboard.write, 'undefined');
 });
@@ -66,7 +66,7 @@ test('Electron writeImage-fout valt terug op native route', async () => {
 
 test('mislukte readback en native fallback zijn geen succes', async () => {
   const result = await writePngToSystemClipboard(png, {
-    ...dependencies({ confirmed: image(640, 480), closeAfterCopy: true }), platform: 'win32',
+    ...dependencies({ confirmed: image(640, 480), afterCopy: 'close' }), platform: 'win32',
     nativeWriter: async () => { throw new Error('native verificatie mislukt'); }
   });
   assert.equal(result.ok, false);
@@ -74,9 +74,9 @@ test('mislukte readback en native fallback zijn geen succes', async () => {
 });
 
 test('sluiten-na-kopiëren wordt uitsluitend na bevestigd succes teruggegeven', async () => {
-  const result = await writePngToSystemClipboard(png, { ...dependencies({ closeAfterCopy: true }), platform: 'darwin' });
+  const result = await writePngToSystemClipboard(png, { ...dependencies({ afterCopy: 'close' }), platform: 'darwin' });
   assert.equal(result.ok, true);
-  assert.equal(result.closeAfterCopy, true);
+  assert.equal(result.afterCopy, 'close');
 });
 
 test('capability detection rapporteert runtime en native fallback', () => {

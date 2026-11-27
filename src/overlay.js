@@ -79,7 +79,7 @@
     out.drawImage(background,
       rect.x * sourceScaleX, rect.y * sourceScaleY, rect.width * sourceScaleX, rect.height * sourceScaleY,
       0, 0, output.width, output.height);
-    window.grabbrOverlay.complete(output.toDataURL('image/png'));
+    window.grabbrOverlay.complete({dataUrl:output.toDataURL('image/png'),coordinateSpace:{bitmapWidth:output.width,bitmapHeight:output.height,logicalWidth:rect.width,logicalHeight:rect.height}});
   }
 
   function cancelSelection() {

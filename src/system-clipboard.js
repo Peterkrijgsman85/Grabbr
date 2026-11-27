@@ -37,7 +37,7 @@ function tryElectronClipboard(bytes, expected, dependencies) {
 }
 
 async function writePngToSystemClipboard(payload, dependencies = {}) {
-  const closeAfterCopy = dependencies.closeAfterCopy === true;
+  const afterCopy = ['copy','close','minimize'].includes(dependencies.afterCopy)?dependencies.afterCopy:'copy';
   let bytes, expected;
   try {
     bytes = normalizePngBytes(payload);
@@ -51,7 +51,7 @@ async function writePngToSystemClipboard(payload, dependencies = {}) {
 
   if (capabilities.electronMain) {
     try {
-      return { ...tryElectronClipboard(bytes, expected, dependencies), closeAfterCopy, capabilities };
+      return { ...tryElectronClipboard(bytes, expected, dependencies), afterCopy, capabilities };
     } catch (error) {
       failures.push(`Electron-route: ${error.message}`);
     }
@@ -64,7 +64,7 @@ async function writePngToSystemClipboard(payload, dependencies = {}) {
       const nativeWriter = dependencies.nativeWriter || writePngNative;
       const result = await nativeWriter(bytes, capabilities.runtime.platform, dependencies.nativeOptions || {});
       if (!result?.ok || !dimensionsMatch(expected, result)) throw new Error('De native helper bevestigde de afbeelding niet correct.');
-      return { ok: true, width: expected.width, height: expected.height, method: result.method || 'native fallback', closeAfterCopy, capabilities };
+      return { ok: true, width: expected.width, height: expected.height, method: result.method || 'native fallback', afterCopy, capabilities };
     } catch (error) {
       failures.push(`Native route: ${error.message}`);
     }

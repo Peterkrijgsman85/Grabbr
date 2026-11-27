@@ -17,6 +17,10 @@ Een document bestaat uit:
 - een geordende lijst annotaties;
 - een history van scene-snapshots.
 
+Vanaf 0.7.4 bevat een scene `coordinateVersion: 2` en een `coordinateSpace` met logische en bitmapafmetingen plus `scaleX/scaleY`. `coordinate-space.js` is de enige plek voor logisch↔bitmap, client↔logisch en exportprojecties. De canvas heeft intrinsieke bitmapafmetingen, terwijl de CSS-afmetingen uit logische documentafmetingen en editorzoom komen. Hierdoor wordt DPR nooit tweemaal toegepast. `normalizeLegacyScene()` deelt 0.7.3-bitmapcoördinaten éénmalig door de vastgelegde schaal.
+
+Capturepayloads dragen waar mogelijk de display-scale mee. De area-overlay stuurt expliciet bitmap- én logische selectieafmetingen. Mixed-DPI-monitorverplaatsing verandert daardoor alleen CSS-layout, nooit annotatiegegevens.
+
 Annotatiecoördinaten zijn relatief aan de oorspronkelijke bitmap. De schaduwmarge wordt alleen tijdens rendering toegevoegd. Daardoor verschuiven annotaties niet wanneer de gebruiker blur, offset of dekking van de schaduw aanpast.
 
 Ondersteunde annotatietypen:
@@ -172,6 +176,10 @@ De initiële payload wordt per `webContents.id` opgeslagen. Het annotatievenster
 
 Area capture volgt dezelfde route: na selectie maakt het hoofdproces direct een nieuw annotatievenster en herstelt het uitsluitend het venster dat de overlay heeft gestart.
 
+Een leeg hoofdvenster vraagt na een geslaagde `annotation:open` via `window:close-empty-home` om vernietiging van uitsluitend zichzelf. Het hoofdproces accepteert dit alleen wanneer de afzender exact `mainWindow` is. De tray houdt het proces actief; bestaande annotatievensters worden niet geraakt.
+
+Het Instellingen-menu gebruikt een afzonderlijk `settingsWindow`. Een bestaande instance wordt getoond en gefocust; anders wordt één nieuw settings-mode-venster gemaakt. Hierdoor opent de native tray/menuactie direct Instellingen zonder een leeg capturevenster te tonen.
+
 ## Klembordpipeline
 
 De renderer exporteert de definitieve compositie met `canvas.toBlob('image/png')` naar een `Uint8Array`. Daardoor hoeft een grote base64-data-URL niet via IPC te worden gekopieerd. `clipboard-payload.js` valideert de PNG-header en normaliseert `ArrayBuffer`, typed arrays en buffers.
@@ -199,4 +207,8 @@ Het interne annotatieclipboard leeft uitsluitend in de renderer van het betreffe
 
 ## Schaduw- en exportbeleid
 
-De vensterschaduw heeft alleen `enabled`. Renderwaarden zijn vast en de canvas wordt vooraf transparant gewist; er wordt geen achtergrondkleur gevuld. PNG en clipboard-PNG behouden alpha. Wanneer schaduw actief is wordt JPEG in de UI uitgeschakeld en weigert de engine JPEG-export defensief, omdat dat formaat geen transparantie ondersteunt.
+De vensterschaduw heeft alleen `enabled`. Renderwaarden zijn vast en de canvas wordt vooraf transparant gewist; PNG en clipboard-PNG behouden alpha. JPEG wordt in een apart canvas met een vaste witte achtergrond gerasterd. Annotatieschaduw is per zichtbaar annotatieobject opgeslagen en staat los van windowschaduw; blur en pixelate ondersteunen deze property niet.
+
+## Instellingenschema 0.7.3
+
+`settings-schema.js` migreert 0.7.2-velden (`startup`, `annotation`, beperkte `storage`) naar de secties `general`, `capture`, `storage` en `editor`. Editorwaarden worden veilig tot 1–200 begrensd. De renderer toont 5–50 voor lijndikte, maar bewaart een handmatige echte waarde buiten dat bereik. `filename-pattern.js` rendert tokens, saneert platformongeldige tekens, kiest de extensie en maakt conflictvarianten. Het traymenu krijgt dezelfde shortcuts uit het centrale settingssnapshot en wordt direct opnieuw opgebouwd na succesvolle registratie.

@@ -15,7 +15,8 @@
   let editingShortcuts = {};
   let editingStorage = { autoSave: true, directory: '' };
   let editingStartup = { openAtLogin: false, supported: true };
-  let editingAnnotation = { closeAfterCopy: false };
+  let editingAnnotation = { afterCopy: 'copy' };
+  let editingGeneral={},editingCapture={},editingEditor={};
   let internalAnnotationClipboard = null;
   let pasteOffset = 16;
 
@@ -32,16 +33,21 @@
     document.documentElement.classList.add(`platform-${appInfo.platform}`);
     document.body.classList.add(`platform-${appInfo.platform}`);
     document.body.dataset.windowMode = windowMode;
+    engine.configureDefaults(appInfo.editor||{});
     bindUI();
+    updateCopyButtonLabel();
+    setNumericDisplay('stroke',appInfo.editor?.strokeWidth||7);setNumericDisplay('font',appInfo.editor?.fontSize||28);setNumericDisplay('step',appInfo.editor?.stepSize||44);
     updateHistoryUI();
     window.grabbr.onOpenCapture(mode => openCapture(mode));
     window.grabbr.onCaptureError(message => showToast(message, true));
-    window.grabbr.onSettingsUpdated(settings => { appInfo = { ...appInfo, ...settings }; });
+    window.grabbr.onSettingsUpdated(settings => { appInfo = { ...appInfo, ...settings }; engine.configureDefaults(appInfo.editor||{});updateCopyButtonLabel(); });
+    window.grabbr.onOpenSettings(()=>openSettings());
     if (windowMode === 'annotation') {
       const payload = await window.grabbr.getInitialAnnotation();
       if (!payload) throw new Error('De screenshot voor dit annotatievenster ontbreekt.');
       await initializeAnnotation(payload);
     }
+    if(windowMode==='settings') openSettings();
     $('#statusText').textContent = `Klaar · gebied ${formatShortcut(appInfo.shortcuts.region)}`;
   }
 
@@ -59,6 +65,10 @@
     $('#resetHotkeys').addEventListener('click', resetHotkeys);
     $('#chooseStorageDirectory').addEventListener('click', chooseStorageDirectory);
     $('#autoSaveEnabled').addEventListener('change', updateStorageControls);
+    $$('.settings-nav button').forEach(button=>button.addEventListener('click',()=>showSettingsPanel(button.dataset.settingsTarget)));
+    $('#outputFormat').addEventListener('change',updateOutputControls);
+    $('#jpegQuality').addEventListener('input',e=>{$('#jpegQualityValue').textContent=`${e.target.value}%`;});
+    $('#filenamePattern').addEventListener('input',updateFilenamePreview);
     $$('.hotkey-input').forEach(input => {
       input.addEventListener('focus', () => beginHotkeyRecording(input));
       input.addEventListener('click', () => beginHotkeyRecording(input));
@@ -77,17 +87,23 @@
     $('#customColor').addEventListener('input', e => setColor(e.target.value, null));
     $('#strokeWidth').addEventListener('input', e => {
       const width = Number(e.target.value);
-      $('#strokeOutput').value = `${width} px`;
-      if (!engine.applySelectedProperties({ width }, false)) engine.setStyle({ width });
+      setNumericDisplay('stroke',width);
+      engine.setStyle({width}); engine.applySelectedProperties({ width }, false);
     });
     $('#strokeWidth').addEventListener('change', () => commitCurrentState());
     $('#fontSize').addEventListener('input', e => {
       const fontSize = Number(e.target.value);
-      $('#fontOutput').value = `${fontSize} px`;
-      if (!engine.applySelectedProperties({ fontSize }, false)) engine.setStyle({ fontSize });
+      setNumericDisplay('font',fontSize);
+      engine.setStyle({fontSize}); engine.applySelectedProperties({ fontSize }, false);
     });
     $('#fontSize').addEventListener('change', () => commitCurrentState());
-    $('#shadowEnabled').addEventListener('change', e => { engine.setShadowEnabled(e.target.checked); syncShadowUI(); applyZoom(); });
+    $('#stepSize').addEventListener('input',e=>{const stepSize=Number(e.target.value);setNumericDisplay('step',stepSize);engine.setStyle({stepSize});engine.applySelectedProperties({stepSize},false);});
+    $('#stepSize').addEventListener('change',()=>commitCurrentState());
+    $('#annotationShadow').addEventListener('change',e=>engine.applySelectedProperties({annotationShadow:e.target.checked},true));
+    bindManualNumeric('stroke',1,200,value=>{engine.setStyle({width:value});engine.applySelectedProperties({width:value},true);});
+    bindManualNumeric('font',1,200,value=>{engine.setStyle({fontSize:value});engine.applySelectedProperties({fontSize:value},true);});
+    bindManualNumeric('step',1,200,value=>{engine.setStyle({stepSize:value});engine.applySelectedProperties({stepSize:value},true);});
+    bindSettingsNumeric('defaultStroke',1,200);bindSettingsNumeric('defaultFont',1,200);bindSettingsNumeric('defaultStep',1,200);
     $('#undoBtn').addEventListener('click', undo);
     $('#redoBtn').addEventListener('click', redo);
     $('#zoomIn').addEventListener('click', () => setZoom(zoom + .1));
@@ -111,6 +127,31 @@
     $('#cropActions').classList.toggle('hidden', tool !== 'crop');
     if (tool === 'crop') $('#applyCrop').disabled = true;
     $('#statusText').textContent = toolHelp(tool);
+  }
+  function updateCopyButtonLabel(){const action=appInfo.annotation?.afterCopy||appInfo.general?.afterCopy||'copy';$('#copyBtn').textContent=action==='close'?'Kopiëren en sluiten':action==='minimize'?'Kopiëren en minimaliseren':'Kopiëren';}
+
+  function setNumericDisplay(prefix,value){
+    const slider=$(`#${prefix==='stroke'?'strokeWidth':prefix==='font'?'fontSize':'stepSize'}`);
+    const output=$(`#${prefix}Output`);
+    const numeric=Math.round(Number(value));
+    slider.value=GrabbrNumericValues.sliderPosition(numeric,Number(slider.min),Number(slider.max));
+    output.textContent=`${numeric} px`; output.dataset.value=String(numeric);
+  }
+  function bindManualNumeric(prefix,min,max,apply){
+    const button=$(`#${prefix}Output`),input=$(`#${prefix}Manual`);
+    button.addEventListener('click',()=>{input.value=button.dataset.value||parseInt(button.textContent,10);button.classList.add('hidden');input.classList.remove('hidden');input.focus();input.select();});
+    input.addEventListener('keydown',event=>{
+      if(event.key==='Escape'){input.classList.add('hidden');button.classList.remove('hidden');return;}
+      if(event.key==='Enter'){event.preventDefault();const value=GrabbrNumericValues.normalizeManualValue(input.value,min,max);if(value===null)return;setNumericDisplay(prefix,value);apply(value);input.classList.add('hidden');button.classList.remove('hidden');}
+    });
+    input.addEventListener('blur',()=>{input.classList.add('hidden');button.classList.remove('hidden');});
+  }
+  function bindSettingsNumeric(prefix,min,max){
+    const slider=$(`#${prefix}Width`)||$(`#${prefix}Size`); const button=$(`#${prefix}Value`),input=$(`#${prefix}Manual`);
+    const show=value=>{const n=Math.round(Number(value));slider.value=GrabbrNumericValues.sliderPosition(n,Number(slider.min),Number(slider.max));button.textContent=`${n} px`;button.dataset.value=n;};
+    slider.addEventListener('input',()=>show(slider.value));button.addEventListener('click',()=>{input.value=button.dataset.value;button.classList.add('hidden');input.classList.remove('hidden');input.focus();input.select();});
+    input.addEventListener('keydown',e=>{if(e.key==='Escape'){input.classList.add('hidden');button.classList.remove('hidden');}if(e.key==='Enter'){e.preventDefault();const v=GrabbrNumericValues.normalizeManualValue(input.value,min,max);if(v!==null)show(v);input.classList.add('hidden');button.classList.remove('hidden');}});input.addEventListener('blur',()=>{input.classList.add('hidden');button.classList.remove('hidden');});
+    slider._showValue=show;
   }
 
   function setColor(color, button) {
@@ -178,27 +219,32 @@
     button.disabled = true;
     button.querySelector('.source-name span:last-child').textContent = 'Vastleggen…';
     try {
-      const dataUrl = await captureFullResolution(source);
+      await window.grabbr.hideGrabbrWindows();
+      const captured = await captureFullResolution(source);
       closeSourceModal();
       const result = await window.grabbr.openAnnotation({
-        dataUrl,
+        dataUrl:captured.dataUrl,
         name: source.name,
-        shadow: sourceKind === 'window',
-        autoSaveBaseName: source.name
+        shadow: sourceKind === 'window' && appInfo.capture?.windowShadow !== false,
+        autoSaveBaseName: source.name,
+        coordinateSpace:{bitmapWidth:captured.width,bitmapHeight:captured.height,logicalWidth:captured.width/(source.scaleFactor||window.devicePixelRatio||1),logicalHeight:captured.height/(source.scaleFactor||window.devicePixelRatio||1)}
       });
       if (!result?.ok) throw new Error(result?.reason || 'Het annotatievenster kon niet worden geopend.');
       showToast('Nieuw annotatievenster geopend');
+      if(windowMode==='home'&&!engine.image) await window.grabbr.closeEmptyHome();
     } catch (error) {
       button.disabled = false;
       button.querySelector('.source-name span:last-child').textContent = source.name;
       showToast(error.message || 'Vastleggen is mislukt.', true);
+    } finally {
+      await window.grabbr.restoreGrabbrWindows().catch(()=>{});
     }
   }
 
   async function initializeAnnotation(payload) {
     captureMode = payload.shadow ? 'window' : 'screen';
     sourceKind = payload.shadow ? 'window' : 'screen';
-    await engine.setDocument(payload.dataUrl, payload.name || 'Grabbr screenshot', { shadow: payload.shadow === true });
+    await engine.setDocument(payload.dataUrl,payload.name||'Grabbr screenshot',{shadow:payload.shadow===true,coordinateSpace:payload.coordinateSpace});
     document.title = `Grabbr — ${engine.name}`;
     syncShadowUI();
     $('#emptyState').classList.add('hidden');
@@ -219,7 +265,7 @@
       try {
         // desktopCapturer window snapshots are cursor-free at source. This is the
         // primary window pipeline on both macOS and Windows; no pixel cleanup is used.
-        return await window.grabbr.getSourceImage(source.id, 'window');
+        const dataUrl=await window.grabbr.getSourceImage(source.id,'window');const img=await imageSize(dataUrl);return{dataUrl,...img};
       } catch (error) {
         console.warn('Cursorvrije windowsnapshot niet beschikbaar; beveiligde streamfallback wordt geprobeerd.', error);
       }
@@ -249,15 +295,17 @@
       if (!video.videoWidth || !video.videoHeight) throw new Error('Geen videoframe ontvangen.');
       const output = document.createElement('canvas'); output.width = video.videoWidth; output.height = video.videoHeight;
       output.getContext('2d').drawImage(video, 0, 0);
-      return output.toDataURL('image/png');
+      return {dataUrl:output.toDataURL('image/png'),width:output.width,height:output.height};
     } catch (error) {
       console.warn('Videocapture niet beschikbaar; hoge-resolutiebron wordt gebruikt.', error);
-      try { return await window.grabbr.getSourceImage(source.id, sourceKind); }
-      catch { if (source.image) return source.image; throw error; }
+      try {const dataUrl=await window.grabbr.getSourceImage(source.id,sourceKind);const img=await imageSize(dataUrl);return{dataUrl,...img};}
+      catch { if(source.image){const img=await imageSize(source.image);return{dataUrl:source.image,...img};} throw error; }
     } finally {
       stream?.getTracks().forEach(track => track.stop());
     }
   }
+
+  function imageSize(dataUrl){return new Promise((resolve,reject)=>{const image=new Image();image.onload=()=>resolve({width:image.naturalWidth,height:image.naturalHeight});image.onerror=()=>reject(new Error('Captureafmetingen konden niet worden gelezen.'));image.src=dataUrl;});}
 
   function resetHistory() {
     history = new GrabbrModel.History(50);
@@ -286,10 +334,7 @@
   function updateHistoryUI() { $('#undoBtn').disabled = !history.canUndo(); $('#redoBtn').disabled = !history.canRedo(); }
 
   function syncShadowUI() {
-    $('#shadowEnabled').checked = engine.shadow.enabled;
-    const jpeg = $('#formatSelect').querySelector('option[value="jpeg"]');
-    jpeg.disabled = engine.shadow.enabled;
-    if (engine.shadow.enabled && $('#formatSelect').value === 'jpeg') $('#formatSelect').value = 'png';
+    // Capture shadow is configured globally under Settings > Vastleggen.
   }
 
   function updateSelectionUI(selected, item) {
@@ -297,20 +342,25 @@
     if (!selected || !item) {
       $('#strokeWidth').disabled = false;
       $('#fontSize').disabled = false;
+      $('#stepSize').disabled = false;
+      $('#annotationShadowRow').classList.add('hidden');
       return;
     }
     const supportsWidth = GrabbrModel.supportsStrokeWidth(item);
     const supportsFont = GrabbrModel.supportsFontSize(item);
     $('#strokeWidth').disabled = !supportsWidth;
     $('#fontSize').disabled = !supportsFont;
+    $('#stepSize').disabled = item.type!=='step';
     if (supportsWidth) {
-      $('#strokeWidth').value = item.width || 5;
-      $('#strokeOutput').value = `${item.width || 5} px`;
+      setNumericDisplay('stroke',item.width || 5);
     }
     if (supportsFont) {
-      $('#fontSize').value = item.fontSize || 28;
-      $('#fontOutput').value = `${item.fontSize || 28} px`;
+      setNumericDisplay('font',item.fontSize || 28);
     }
+    if(item.type==='step') setNumericDisplay('step',Math.round((item.radius||22)*2));
+    const supportsShadow=GrabbrModel.supportsAnnotationShadow(item);
+    $('#annotationShadowRow').classList.toggle('hidden',!supportsShadow);
+    $('#annotationShadow').checked=supportsShadow&&item.annotationShadow===true;
     if (item.color) {
       $('#customColor').value = item.color;
       $$('#colorPalette button').forEach(button => button.classList.toggle('active', button.dataset.color.toLowerCase() === item.color.toLowerCase()));
@@ -324,8 +374,9 @@
 
   function applyZoom() {
     if (!engine.image) return;
-    canvas.style.width = `${Math.round(canvas.width * zoom)}px`;
-    canvas.style.height = `${Math.round(canvas.height * zoom)}px`;
+    const display=engine.displayDimensions(zoom);
+    canvas.style.width=`${Math.round(display.width)}px`;
+    canvas.style.height=`${Math.round(display.height)}px`;
     $('#zoomLabel').textContent = `${Math.round(zoom * 100)}%`;
     engine.render();
   }
@@ -335,7 +386,8 @@
     const viewport = $('#canvasViewport');
     const availableWidth = Math.max(200, viewport.clientWidth - 120);
     const availableHeight = Math.max(200, viewport.clientHeight - 120);
-    const next = Math.min(1, availableWidth / canvas.width, availableHeight / canvas.height);
+    const base=engine.displayDimensions(1);
+    const next=Math.min(1,availableWidth/base.width,availableHeight/base.height);
     if (changeOnly || next < zoom) zoom = Math.max(.1, Math.floor(next * 100) / 100);
     applyZoom();
   }
@@ -354,9 +406,12 @@
       const result = await window.grabbr.writePngToClipboard(pngBytes);
       if (!result?.ok) throw new Error(result?.error || 'Het systeemklembord heeft de afbeelding niet geaccepteerd.');
       showToast(`Afbeelding gekopieerd (${result.width} × ${result.height} px)`);
-      if (result.closeAfterCopy === true) {
+      if (result.afterCopy === 'close') {
         const closed = await window.grabbr.closeSelf();
         if (!closed?.ok) throw new Error(closed?.reason || 'De afbeelding is gekopieerd, maar het annotatievenster kon niet worden gesloten.');
+      }
+      if(result.afterCopy==='minimize'){
+        const minimized=await window.grabbr.minimizeSelf();if(!minimized?.ok)throw new Error(minimized?.reason||'Het annotatievenster kon niet worden geminimaliseerd.');
       }
       return true;
     } catch (error) {
@@ -371,16 +426,17 @@
   }
 
   async function saveImage() {
-    const format = $('#formatSelect').value;
+    const format = appInfo.storage?.format||'png';
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const result = await window.grabbr.saveImage({ dataUrl: engine.exportDataUrl(format), suggestedName: `${engine.name}-${stamp}.${format === 'jpeg' ? 'jpg' : 'png'}`, format });
+    const result = await window.grabbr.saveImage({ dataUrl: engine.exportDataUrl(format,(appInfo.storage?.jpegQuality||90)/100), suggestedName: `${engine.name}-${stamp}.${format === 'jpeg' ? 'jpg' : 'png'}`, format });
     if (!result.canceled) showToast(`Opgeslagen als ${result.filePath.split(/[\\/]/).pop()}`);
   }
 
   async function autoSaveCapture(baseName) {
     if (!appInfo.storage?.autoSave) return null;
     try {
-      const result = await window.grabbr.autoSaveImage({ dataUrl: engine.exportDataUrl('png'), baseName });
+      const format=appInfo.storage?.format||'png';
+      const result = await window.grabbr.autoSaveImage({ dataUrl: engine.exportDataUrl(format,(appInfo.storage?.jpegQuality||90)/100), baseName,format });
       if (result.saved) {
         appInfo.lastAutoSavedPath = result.filePath;
         $('#statusText').textContent = `Automatisch opgeslagen · ${result.filePath.split(/[\\/]/).pop()}`;
@@ -407,11 +463,13 @@
     editingShortcuts = { ...appInfo.shortcuts };
     editingStorage = { ...(appInfo.storage || { autoSave: true, directory: '' }) };
     editingStartup = { ...(appInfo.startup || { openAtLogin: false, supported: true }) };
-    editingAnnotation = { ...(appInfo.annotation || { closeAfterCopy: false }) };
+    editingAnnotation = { ...(appInfo.annotation || { afterCopy: 'copy' }) };
+    editingGeneral={...(appInfo.general||{})};editingCapture={...(appInfo.capture||{})};editingEditor={...(appInfo.editor||{})};
     populateShortcutInputs();
     populateStorageSettings();
     populateStartupSettings();
     populateAnnotationSettings();
+    populateGrabbrSettings();
     $('#settingsError').classList.add('hidden');
     $('#settingsModal').classList.remove('hidden');
   }
@@ -442,8 +500,20 @@
   }
 
   function populateAnnotationSettings() {
-    $('#closeAfterCopy').checked = editingAnnotation.closeAfterCopy === true;
+    $('#afterCopy').value=editingAnnotation.afterCopy||'copy';
   }
+
+  function populateGrabbrSettings(){
+    $('#hideGrabbrDuringCapture').checked=editingGeneral.hideGrabbrDuringCapture!==false;
+    $('#captureShadowEnabled').checked=editingCapture.windowShadow!==false;
+    $('#filenamePattern').value=editingStorage.filenamePattern||'Grabbr-{date}-{time}-{type}';
+    $('#outputFormat').value=editingStorage.format==='jpeg'?'jpeg':'png';$('#jpegQuality').value=editingStorage.jpegQuality||90;$('#jpegQualityValue').textContent=`${$('#jpegQuality').value}%`;
+    $('#defaultStrokeWidth')._showValue?.(editingEditor.strokeWidth||7);$('#defaultFontSize')._showValue?.(editingEditor.fontSize||28);$('#defaultStepSize')._showValue?.(editingEditor.stepSize||44);$('#defaultAnnotationShadow').checked=editingEditor.annotationShadow===true;
+    updateOutputControls();updateFilenamePreview();showSettingsPanel('general');
+  }
+  function showSettingsPanel(name){$$('.settings-nav button').forEach(b=>b.classList.toggle('active',b.dataset.settingsTarget===name));$$('.settings-panel').forEach(p=>p.classList.toggle('active',p.dataset.settingsPanel===name));}
+  function updateOutputControls(){$('#jpegQualityRow').classList.toggle('hidden',$('#outputFormat').value!=='jpeg');updateFilenamePreview();}
+  function updateFilenamePreview(){const format=$('#outputFormat').value;$('#filenamePreview').textContent=GrabbrFilenamePattern.filenameFromPattern($('#filenamePattern').value,{date:new Date(2026,10,27,9,30,15),type:'Venster',counter:1,format});}
 
   function updateStorageControls() {
     const enabled = $('#autoSaveEnabled').checked;
@@ -487,45 +557,19 @@
 
   async function saveSettings(event) {
     event.preventDefault();
-    const check = GrabbrHotkeys.validateSettings(editingShortcuts);
-    if (!check.valid) {
-      showSettingsError(check.reason);
-      return;
-    }
-    try {
-      editingStorage.autoSave = $('#autoSaveEnabled').checked;
-      editingStorage.directory = $('#storageDirectory').value;
-      const storageResult = await window.grabbr.updateStorage(editingStorage);
-      if (!storageResult.ok) {
-        showSettingsError(storageResult.reason || 'De opslaginstellingen konden niet worden opgeslagen.');
-        return;
-      }
-      const result = await window.grabbr.updateShortcuts(check.settings);
-      if (!result.ok) {
-        showSettingsError(result.reason || 'De sneltoetsen konden niet worden geregistreerd.');
-        return;
-      }
-      const startupResult = await window.grabbr.updateStartup($('#startupEnabled').checked);
-      if (!startupResult.ok) {
-        showSettingsError(startupResult.reason || 'De autostartinstelling kon niet worden opgeslagen.');
-        return;
-      }
-      const annotationResult = await window.grabbr.updateAnnotationSettings({ closeAfterCopy: $('#closeAfterCopy').checked });
-      if (!annotationResult.ok) {
-        showSettingsError(annotationResult.reason || 'De annotatievensterinstelling kon niet worden opgeslagen.');
-        return;
-      }
-      appInfo.shortcuts = result.shortcuts;
-      appInfo.storage = storageResult.storage;
-      appInfo.startup = startupResult.startup;
-      appInfo.annotation = annotationResult.annotation;
-      editingShortcuts = { ...result.shortcuts };
-      $('#statusText').textContent = `Klaar · gebied ${formatShortcut(appInfo.shortcuts.region)}`;
-      closeSettings();
-      showToast('Instellingen opgeslagen');
-    } catch (error) {
-      showSettingsError(error.message || 'De instellingen konden niet worden opgeslagen.');
-    }
+    const payload={
+      shortcuts:{...editingShortcuts},
+      general:{startup:$('#startupEnabled').checked,afterCopy:$('#afterCopy').value,hideGrabbrDuringCapture:$('#hideGrabbrDuringCapture').checked},
+      capture:{windowShadow:$('#captureShadowEnabled').checked},
+      storage:{autoSave:$('#autoSaveEnabled').checked,directory:$('#storageDirectory').value,filenamePattern:$('#filenamePattern').value,format:$('#outputFormat').value,jpegQuality:Number($('#jpegQuality').value)},
+      editor:{strokeWidth:Number($('#defaultStrokeValue').dataset.value),fontSize:Number($('#defaultFontValue').dataset.value),stepSize:Number($('#defaultStepValue').dataset.value),annotationShadow:$('#defaultAnnotationShadow').checked},
+      recent:appInfo.recent||{}
+    };
+    try{
+      const result=await window.grabbr.updateAllSettings(payload);
+      if(!result.ok){showSettingsError(result.reason||'Instellingen konden niet worden opgeslagen.');return;}
+      appInfo={...appInfo,...result};engine.configureDefaults(appInfo.editor||{});updateCopyButtonLabel();closeSettings();showToast('Instellingen opgeslagen');
+    }catch(error){showSettingsError(error.message||'Instellingen konden niet worden opgeslagen.');}
   }
 
   async function resetHotkeys() {

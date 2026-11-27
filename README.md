@@ -4,6 +4,30 @@ Grabbr is een screenshottool voor **macOS en Windows** met vensterselectie, full
 
 > Status: functioneel prototype / uitbreidbare MVP-basis.
 
+## Nieuw in 0.7.4
+
+- Eén logisch, display-onafhankelijk documentcoördinatenstelsel voor annotaties, ongeacht DPR, bitmapresolutie, editorzoom en Windows display scaling.
+- Scherpe export naar de werkelijke bitmapresolutie zonder dubbele scaling.
+- Een leeg hoofdvenster sluit na een succesvolle nieuwe capture, terwijl bestaande annotatievensters en tray/hotkeys actief blijven.
+- Tray-/menubalkactie **Instellingen** opent een zelfstandig instellingenvenster en brengt een bestaand venster naar voren.
+- **Na kopiëren** heeft drie acties: alleen kopiëren, sluiten of minimaliseren.
+- De primaire knoptekst volgt de gekozen kopieeractie direct.
+- Migratie van de 0.7.3-instelling `closeAfterCopy` naar de nieuwe actie.
+
+### Coördinaten en Retina/DPI
+
+Annotaties worden opgeslagen in logische documenteenheden. Een document bewaart afzonderlijk zijn logische afmetingen, bitmapafmetingen en schaal per as. Renderen gebruikt één transformatie van logisch naar bitmap; CSS-zoom verandert alleen de weergavegrootte. Daardoor blijven tekst, lijnen, pijlpunten, kaders, ellipsen, pen, stappen, blur/pixelate, schaduwen, handles en hit-testing dezelfde visuele grootte houden op DPR 1/2 en Windows 100/125/150%. Bestaande 0.7.3-scenes zonder `coordinateVersion` worden bij herstel éénmalig genormaliseerd.
+
+### Na kopiëren
+
+Onder **Instellingen → Algemeen** kan worden gekozen:
+
+- **Alleen kopiëren** — venster blijft open;
+- **Kopiëren en sluiten** — alleen het huidige annotatievenster sluit na bevestigd succes;
+- **Kopiëren en minimaliseren** — hetzelfde venster wordt verborgen op macOS of geminimaliseerd op Windows, met canvas, selectie, annotaties en undo/redo-history intact.
+
+Bij een clipboardfout wordt geen van deze vensteracties uitgevoerd.
+
 ## Functies
 
 - Vensterselectie met previews
@@ -109,6 +133,9 @@ Na selectie kunnen de volgende eigenschappen achteraf worden aangepast:
 - lijndikte van pijl, lijn, kader, ellips en pen;
 - tekstgrootte van tekstannotaties;
 - kleur van bestaande annotaties.
+- transparante annotatieschaduw voor pijl, lijn, kader, ellips, tekst en stapnummer.
+
+De lijndikteslider loopt van 5–50 px. De aanklikbare px-waarde naast lijndikte, tekstgrootte en stapgrootte accepteert handmatig 1–200 px; waarden buiten het visuele sliderbereik blijven volledig behouden.
 
 Lijnannotaties hebben twee eindpunthandles. Hit-testing en coördinaten worden omgerekend vanuit de werkelijke canvas/CSS-verhouding, zodat resizen ook bij zoom en Retina/DPI-scaling correct blijft.
 
@@ -122,7 +149,7 @@ Met een geselecteerde annotatie kopieert `Cmd/Ctrl+C` de annotatie intern. `Cmd/
 
 ## Transparante vensterschaduw
 
-Schaduw is vereenvoudigd tot één schakelaar. Blur, offset en dekking zijn vaste, consistente waarden en worden niet meer als losse instellingen getoond. PNG-export en automatisch opslaan behouden echte alpha-transparantie rondom de schaduw. JPEG wordt uitgeschakeld zolang schaduw actief is, omdat JPEG geen alpha ondersteunt.
+Windowschaduw staat onder **Instellingen → Vastleggen**. PNG-export en automatisch opslaan behouden echte alpha-transparantie rondom de schaduw. JPEG gebruikt bewust een vaste witte achtergrond, omdat JPEG geen alpha ondersteunt. Annotatieschaduw is een afzonderlijke per-annotatieoptie en staat standaard uit.
 
 ## Start met besturingssysteem
 
@@ -133,15 +160,24 @@ Onder **Instellingen → Algemeen** kan **Start met besturingssysteem** worden i
 - Bij uitschakelen wordt het login-item weer verwijderd.
 - Grabbr leest de bevestigde status terug van het besturingssysteem en meldt het wanneer de wijziging niet is geaccepteerd.
 
-## Automatisch opslaan
+## Automatisch opslaan en bestandsnamen
 
-Nieuwe captures worden standaard automatisch als PNG opgeslagen in `Afbeeldingen/Grabbr`. In **Instellingen → Opslaan** kun je:
+Nieuwe captures worden standaard automatisch als PNG opgeslagen in `Afbeeldingen/Grabbr`. Onder **Instellingen → Vastleggen** kun je:
 
 - automatisch opslaan in- of uitschakelen;
 - met de native mapkiezer een andere standaardmap aanwijzen;
 - de ingestelde map controleren voordat je opslaat.
+- PNG/JPEG en JPEG-kwaliteit kiezen;
+- een bestandsnaampatroon instellen met `{date}`, `{time}`, `{year}`, `{month}`, `{day}`, `{hour}`, `{minute}`, `{second}`, `{type}` en `{counter}`.
 
-Bestandsnamen bevatten datum, tijd tot op milliseconden en de naam van het venster of capturetype. Grabbr gebruikt een exclusieve bestandsaanmaak en voegt bij een zeldzame naamconflict automatisch een volgnummer toe. Een bestaand bestand wordt daardoor nooit stil overschreven.
+Het live voorbeeld toont direct het resultaat. Ongeldige tekens worden veilig vervangen. Grabbr gebruikt exclusieve bestandsaanmaak en voegt bij een botsing `-2`, `-3` enzovoort toe wanneer het patroon geen `{counter}` bevat. Een bestaand bestand wordt nooit stil overschreven.
+
+## Instellingensecties
+
+- **Algemeen:** autostart, sluiten na kopiëren, Grabbr-vensters verbergen tijdens capture.
+- **Vastleggen:** windowschaduw, opslagmap, automatisch opslaan, naamgevingspatroon en uitvoerformaat.
+- **Sneltoetsen:** globale capturehotkeys en conflictcontrole.
+- **Editor:** standaard lijndikte, tekstgrootte, stapgrootte en annotatieschaduw.
 
 ## Annotaties achteraf aanpassen
 
