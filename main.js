@@ -15,7 +15,7 @@ const { loadRecentScreenshot } = require('./src/recent-screenshot.js');
 const { WindowLifecyclePolicy } = require('./src/window-lifecycle.js');
 const { migrateSettings } = require('./src/settings-schema.js');
 const { filenameFromPattern, filenameForAttempt } = require('./src/filename-pattern.js');
-const { isCheckDue, normalizeRepository, isSafeReleaseUrl } = require('./src/update-check.js');
+const { isCheckDue, normalizeRepository, isSafeReleaseUrl, isSafeRepositoryUrl } = require('./src/update-check.js');
 const { checkForUpdate } = require('./src/update-service.js');
 const { extractAndCopyText } = require('./src/ocr-service.js');
 const { writeTextToSystemClipboard } = require('./src/system-text-clipboard.js');
@@ -521,6 +521,7 @@ ipcMain.handle('app:info', () => ({
   platform: process.platform,
   version: app.getVersion(),
   runtime: { electron: process.versions.electron || null, node: process.versions.node || null },
+  architecture: process.arch,
   clipboardCapabilities: detectClipboardCapabilities({ electronClipboard, nativeImage, platform: process.platform }),
   ...settingsSnapshot(),
   screenPermission: isMac ? systemPreferences.getMediaAccessStatus('screen') : 'granted'
@@ -584,6 +585,13 @@ ipcMain.handle('updates:open-release', async (_event, url) => {
   if (!isSafeReleaseUrl(url, githubRepository)) return { ok: false, reason: 'De release-URL is niet toegestaan.' };
   try { await shell.openExternal(url); return { ok: true }; }
   catch (error) { return { ok: false, reason: `De releasepagina kon niet worden geopend: ${error.message}` }; }
+});
+ipcMain.handle('updates:open-github', async () => {
+  if (!githubRepository) return { ok: false, reason: 'GitHub-repository is niet geconfigureerd.' };
+  const url = `https://github.com/${githubRepository}`;
+  if (!isSafeRepositoryUrl(url, githubRepository)) return { ok: false, reason: 'De GitHub-URL is niet toegestaan.' };
+  try { await shell.openExternal(url); return { ok: true }; }
+  catch (error) { return { ok: false, reason: `GitHub kon niet worden geopend: ${error.message}` }; }
 });
 
 ipcMain.handle('capture:start-region', async event => {

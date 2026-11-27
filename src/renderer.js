@@ -71,6 +71,7 @@
     $('#filenamePattern').addEventListener('input',updateFilenamePreview);
     $('#checkUpdatesNow').addEventListener('click',checkUpdatesNow);
     $('#viewRelease').addEventListener('click',viewRelease);
+    $('#viewGitHub').addEventListener('click',viewGitHub);
     $$('.hotkey-input').forEach(input => {
       input.addEventListener('focus', () => beginHotkeyRecording(input));
       input.addEventListener('click', () => beginHotkeyRecording(input));
@@ -513,7 +514,10 @@
     $('#filenamePattern').value=editingStorage.filenamePattern||'Grabbr-{date}-{time}-{type}';
     $('#outputFormat').value=editingStorage.format==='jpeg'?'jpeg':'png';$('#jpegQuality').value=editingStorage.jpegQuality||90;$('#jpegQualityValue').textContent=`${$('#jpegQuality').value}%`;
     $('#defaultStrokeWidth')._showValue?.(editingEditor.strokeWidth||7);$('#defaultFontSize')._showValue?.(editingEditor.fontSize||28);$('#defaultStepSize')._showValue?.(editingEditor.stepSize||44);$('#defaultAnnotationShadow').checked=editingEditor.annotationShadow===true;
-    $('#automaticUpdateCheck').checked=appInfo.updates?.automatic!==false;$('#currentVersion').textContent=appInfo.version||'';renderUpdateStatus();
+    $('#automaticUpdateCheck').checked=appInfo.updates?.automatic!==false;
+    const version=appInfo.version||'';$('#currentVersion').textContent=version;$('#aboutVersion').textContent=version;
+    $('#aboutPlatform').textContent=formatPlatform(appInfo.platform);$('#aboutArchitecture').textContent=formatArchitecture(appInfo.architecture);
+    $('#viewGitHub').classList.toggle('hidden',!appInfo.githubRepository);renderUpdateStatus();
     updateOutputControls();updateFilenamePreview();showSettingsPanel('general');
   }
   function showSettingsPanel(name){$$('.settings-nav button').forEach(b=>b.classList.toggle('active',b.dataset.settingsTarget===name));$$('.settings-panel').forEach(p=>p.classList.toggle('active',p.dataset.settingsPanel===name));}
@@ -522,6 +526,9 @@
   function renderUpdateStatus(){const status=appInfo.updateStatus||{state:'idle',message:'Nog niet gecontroleerd.'};$('#updateStatus').textContent=status.message||'';$('#updateStatus').className=`update-status ${status.state||'idle'}`;$('#viewRelease').classList.toggle('hidden',status.state!=='available'||!status.url);}
   async function checkUpdatesNow(){const button=$('#checkUpdatesNow');button.disabled=true;try{const status=await window.grabbr.checkUpdatesNow();appInfo.updateStatus=status;renderUpdateStatus();}catch(error){appInfo.updateStatus={state:'error',message:`Updatecontrole mislukt: ${error.message}`};renderUpdateStatus();}finally{button.disabled=false;}}
   async function viewRelease(){const url=appInfo.updateStatus?.url;if(!url)return;const result=await window.grabbr.openRelease(url);if(!result?.ok)showToast(result?.reason||'Releasepagina kon niet worden geopend.',true);}
+  async function viewGitHub(){const result=await window.grabbr.openGitHub();if(!result?.ok)showToast(result?.reason||'GitHub kon niet worden geopend.',true);}
+  function formatPlatform(platform){return platform==='darwin'?'macOS':platform==='win32'?'Windows':platform==='linux'?'Linux':String(platform||'Onbekend');}
+  function formatArchitecture(architecture){return architecture==='x64'?'x64':architecture==='arm64'?'arm64':String(architecture||'Onbekend');}
 
   function updateStorageControls() {
     const enabled = $('#autoSaveEnabled').checked;
