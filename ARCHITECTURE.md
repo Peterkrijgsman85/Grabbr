@@ -218,3 +218,17 @@ De vensterschaduw heeft alleen `enabled`. Renderwaarden zijn vast en de canvas w
 `update-check.js` bevat pure semver-, releasefilter-, interval- en URLvalidatie. `update-service.js` doet één publieke GitHub REST-call zonder token. Het main process gebruikt `net.fetch`, bewaart alleen `lastCheckedAt` en een tijdelijke status, en broadcast die naar vensters. Er is geen electron-updater, downloadfunctie, installatieactie of telemetrie. Externe navigatie loopt via een specifieke IPC-handler die alleen de release-URL van de geconfigureerde repository accepteert.
 
 De releaseworkflow injecteert `${{ github.repository }}` uitsluitend in de gebouwde package metadata. Daardoor verwijst een releasebuild naar zijn werkelijke repository zonder hardcoded eigenaar in de bron.
+
+## Lokale OCR-flow
+
+OCR gebruikt dezelfde `overlayWindow` en regionselectie als area capture, maar `regionContext.action` is `ocr`. Bij voltooiing verwerkt het main process de geselecteerde PNG via `ocr-service.js` en keert vóór `createAnnotationWindow()` terug. Daardoor ontstaat geen annotatievenster of leeg hoofdvenster.
+
+`native-ocr.js` routeert per platform naar lokale OS-technologie: Vision via JXA/AppKit op macOS en `Windows.Media.Ocr` via STA PowerShell/WinRT op Windows. De Windows helper verwijdert zijn tijdelijke PNG altijd in `finally`; macOS leest PNG-bytes direct via stdin. `ocr-text.js` normaliseert regeleinden, tabs en overtollige lege regels. `system-text-clipboard.js` verifieert de geschreven tekst via Electron main clipboard of lokale pbcopy/pbpaste dan wel Windows Forms Clipboard. De clipboardroute wordt uitsluitend aangeroepen als genormaliseerde OCR-tekst niet leeg is.
+
+Resultaten en fouten worden via Electron `Notification` of een Windows trayballoon niet-blokkerend gemeld. De OCR-flow bevat geen netwerkcode.
+
+`ocr-flow-controller.js` vormt de testbare end-to-end orchestrator: data-URL valideren, PNG-dimensies controleren, OCR-service uitvoeren, clipboard bevestigen en op iedere succes- of foutuitgang de notificatiecallback aanroepen. Onverwachte pipeline-exceptions worden eveneens in een foutresultaat en melding omgezet.
+
+Op macOS gebruikt `native-ocr.js` de bewezen Vision-datahandlerroute (`VNImageRequestHandler.initWithDataOptions`) en een vast absoluut `/usr/bin/osascript`-pad. `assertHelperAvailable()` controleert het helperpad vóór spawn. Op Windows wordt het absolute WindowsPowerShell-pad afgeleid uit `SystemRoot`. Helpers lopen via `child_process.spawn` met stdin en begrensde timeout; notificaties gebruiken apart `execFile` met vaste executable en argumenten. Deze paden werken onafhankelijk van source- of ASAR-locatie.
+
+Developmentlogging loopt door een metadata-allowlist in `ocrDebug()`. Payload, data-URL en herkende tekst kunnen daardoor niet per ongeluk in de console terechtkomen. Packaged builds loggen standaard niet.

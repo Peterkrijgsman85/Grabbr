@@ -485,9 +485,11 @@
     $('#hotkeyWindow').value = formatShortcut(editingShortcuts.window);
     $('#hotkeyRegion').value = formatShortcut(editingShortcuts.region);
     $('#hotkeyScreen').value = formatShortcut(editingShortcuts.screen);
+    $('#hotkeyOcr').value = formatShortcut(editingShortcuts.ocr);
     $('#hotkeyWindow').dataset.accelerator = editingShortcuts.window || '';
     $('#hotkeyRegion').dataset.accelerator = editingShortcuts.region || '';
     $('#hotkeyScreen').dataset.accelerator = editingShortcuts.screen || '';
+    $('#hotkeyOcr').dataset.accelerator = editingShortcuts.ocr || '';
   }
 
   function populateStorageSettings() {
@@ -554,7 +556,7 @@
     }
     const accelerator = GrabbrHotkeys.eventToAccelerator(event, appInfo.platform === 'darwin');
     if (!accelerator) return;
-    const action = input.id === 'hotkeyWindow' ? 'window' : input.id === 'hotkeyRegion' ? 'region' : 'screen';
+    const action = input.id === 'hotkeyWindow' ? 'window' : input.id === 'hotkeyRegion' ? 'region' : input.id === 'hotkeyScreen' ? 'screen' : 'ocr';
     editingShortcuts[action] = accelerator;
     input.dataset.accelerator = accelerator;
     input.value = formatShortcut(accelerator);

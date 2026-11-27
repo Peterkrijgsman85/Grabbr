@@ -1,7 +1,7 @@
 'use strict';
 
 const electron = require('electron');
-const { app, BrowserWindow, ipcMain, desktopCapturer, dialog, nativeImage, globalShortcut, Tray, Menu, shell, systemPreferences, screen, session, net } = electron;
+const { app, BrowserWindow, ipcMain, desktopCapturer, dialog, nativeImage, globalShortcut, Tray, Menu, shell, systemPreferences, screen, session, net, Notification } = electron;
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { DEFAULTS, validateSettings } = require('./src/hotkeys.js');
@@ -17,6 +17,10 @@ const { migrateSettings } = require('./src/settings-schema.js');
 const { filenameFromPattern, filenameForAttempt } = require('./src/filename-pattern.js');
 const { isCheckDue, normalizeRepository, isSafeReleaseUrl } = require('./src/update-check.js');
 const { checkForUpdate } = require('./src/update-service.js');
+const { extractAndCopyText } = require('./src/ocr-service.js');
+const { writeTextToSystemClipboard } = require('./src/system-text-clipboard.js');
+const { completeOcrSelection } = require('./src/ocr-flow-controller.js');
+const { showNativeNotification } = require('./src/native-notification.js');
 const packageMetadata = require('./package.json');
 
 app.setName('Grabbr');
@@ -250,6 +254,16 @@ function activeGrabbrWindow() {
 }
 
 function showCapture(mode = 'window') {
+  if (mode === 'ocr') {
+    const focused = BrowserWindow.getFocusedWindow();
+    const requester = focused && (focused === mainWindow || focused === settingsWindow || annotationWindows.has(focused)) ? focused : null;
+    beginRegionCapture(requester, 'ocr').catch(async error => {
+      ocrDebug('selection-start-failed', { ok: false, errorName: error.name, platform: process.platform });
+      try { await notifyOcrResult(false, `OCR-tekst vastleggen mislukt: ${error.message}`); }
+      catch (notificationError) { console.error('[Grabbr OCR] melding mislukt', notificationError.message); }
+    });
+    return;
+  }
   const host = activeGrabbrWindow();
   if (mode === 'region') {
     beginRegionCapture(host).catch(error => notifyCaptureError(error, host));
@@ -266,6 +280,63 @@ function notifyCaptureError(error, target = mainWindow) {
   win.webContents.send('capture:error', error.message || 'Gebiedsselectie kon niet worden gestart.');
 }
 
+function ocrDebug(stage, metadata = {}) {
+  if (app.isPackaged && process.env.GRABBR_OCR_DEBUG !== '1') return;
+  const safe = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    if (['bytes', 'width', 'height', 'ok', 'stage', 'recognitionMethod', 'clipboardMethod', 'errorName', 'method', 'platform'].includes(key)) safe[key] = value;
+  }
+  console.info(`[Grabbr OCR] ${stage}`, safe);
+}
+
+async function electronNotification(success, title, message) {
+  if (!Notification || typeof Notification.isSupported !== 'function' || !Notification.isSupported()) throw new Error('Electron Notification wordt niet ondersteund.');
+  await new Promise((resolve, reject) => {
+    const notification = new Notification({ title, body: message, silent: false });
+    let settled = false;
+    const timer = setTimeout(() => { if (!settled) { settled = true; resolve(); } }, 1800);
+    notification.once?.('show', () => { if (!settled) { settled = true; clearTimeout(timer); resolve(); } });
+    notification.once?.('failed', (_event, error) => { if (!settled) { settled = true; clearTimeout(timer); reject(new Error(error || 'Electron Notification faalde.')); } });
+    notification.show();
+  });
+  return { ok: true, method: 'Electron Notification' };
+}
+
+async function notifyOcrResult(success, message) {
+  const title = success ? 'Grabbr — tekst gekopieerd' : 'Grabbr — OCR';
+  const failures = [];
+  try {
+    const result = await showNativeNotification(process.platform, title, message);
+    ocrDebug('notification-native', { ok: true, method: result.method, platform: process.platform });
+    return result;
+  } catch (error) { failures.push(`native: ${error.message}`); ocrDebug('notification-native-failed', { ok: false, errorName: error.name, platform: process.platform }); }
+  try {
+    const result = await electronNotification(success, title, message);
+    ocrDebug('notification-electron', { ok: true, method: result.method });
+    return result;
+  } catch (error) { failures.push(`electron: ${error.message}`); ocrDebug('notification-electron-failed', { ok: false, errorName: error.name }); }
+  if (process.platform === 'win32' && tray && typeof tray.displayBalloon === 'function') {
+    tray.displayBalloon({ title, content: message, iconType: success ? 'info' : 'warning', noSound: false });
+    ocrDebug('notification-balloon', { ok: true, method: 'tray balloon' });
+    return { ok: true, method: 'tray balloon' };
+  }
+  console[success ? 'info' : 'warn'](`${title}: ${message}`);
+  throw new Error(`Geen native OCR-melding kon worden getoond (${failures.join(' | ')}).`);
+}
+
+async function processOcrSelection(payload) {
+  return completeOcrSelection(payload, {
+    extractAndCopy: extractAndCopyText,
+    serviceDependencies: {
+      platform: process.platform,
+      ocrOptions: { log: ocrDebug },
+      clipboardOptions: { electronClipboard, platform: process.platform }
+    },
+    notify: notifyOcrResult,
+    log: ocrDebug
+  });
+}
+
 function createTray() {
   const iconPath = isMac ? path.join(__dirname, 'assets', 'trayTemplate.png') : path.join(__dirname, 'assets', 'icon.png');
   const sourceIcon = nativeImage.createFromPath(iconPath);
@@ -277,7 +348,7 @@ function createTray() {
 }
 function trayMenuIcons(){
   const result={};
-  for(const name of ['window','region','screen','settings','grabbr']){
+  for(const name of ['window','region','screen','ocr','settings','grabbr']){
     const icon=nativeImage.createFromPath(path.join(__dirname,'assets','menu',`${name}.png`)).resize({width:16,height:16});
     if(isMac) icon.setTemplateImage(true); result[name]=icon;
   }
@@ -297,6 +368,7 @@ function refreshTrayMenu(){
     captureWindow: () => showCapture('window'),
     captureRegion: () => showCapture('region'),
     captureScreen: () => showCapture('screen'),
+    captureOcr: () => showCapture('ocr'),
     openLastScreenshot: () => openLastScreenshot(),
     openSettings:()=>openSettingsWindow(),
     openApp: () => { ensureMainWindow().show(); mainWindow.focus(); },
@@ -346,7 +418,7 @@ function registerShortcuts(next = shortcuts) {
   if (!checked.valid) return { ok: false, reason: checked.reason, action: checked.action };
   const previous = { ...shortcuts };
   globalShortcut.unregisterAll();
-  const actions = { window: () => showCapture('window'), region: () => showCapture('region'), screen: () => showCapture('screen') };
+  const actions = { window: () => showCapture('window'), region: () => showCapture('region'), screen: () => showCapture('screen'), ocr: () => showCapture('ocr') };
   shortcutStatus = {};
   for (const [action, accelerator] of Object.entries(checked.settings)) {
     const ok = globalShortcut.register(accelerator, actions[action]);
@@ -371,7 +443,7 @@ function restoreRegionRequester() {
   if (context?.wasVisible && context.requester && !context.requester.isDestroyed()) context.requester.focus();
 }
 
-async function beginRegionCapture(requester = activeGrabbrWindow()) {
+async function beginRegionCapture(requester = activeGrabbrWindow(), action = 'capture') {
   if (overlayWindow && !overlayWindow.isDestroyed()) { overlayWindow.focus(); return; }
   const targetDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   const requesterWasVisible=Boolean(requester?.isVisible());
@@ -379,7 +451,7 @@ async function beginRegionCapture(requester = activeGrabbrWindow()) {
   if(general.hideGrabbrDuringCapture){
     for(const win of [mainWindow,settingsWindow,...annotationWindows.values()]) if(win&&!win.isDestroyed()&&win.isVisible()){hiddenWindows.push(win);win.hide();}
   }
-  regionContext = { requester, wasVisible: requesterWasVisible, hiddenWindows };
+  regionContext = { requester, wasVisible: requesterWasVisible, hiddenWindows, action };
   await new Promise(resolve => setTimeout(resolve, 160));
   const requestedWidth = Math.min(8192, Math.round(targetDisplay.bounds.width * targetDisplay.scaleFactor));
   const requestedHeight = Math.min(8192, Math.round(targetDisplay.bounds.height * targetDisplay.scaleFactor));
@@ -528,8 +600,19 @@ ipcMain.handle('capture:restore-grabbr-windows',event=>{
   const hidden=captureHiddenWindows.get(event.sender.id)||[];captureHiddenWindows.delete(event.sender.id);
   for(const win of hidden)if(win&&!win.isDestroyed())win.show();return true;
 });
-ipcMain.on('region:complete',(_event,payload)=>{
+ipcMain.on('region:complete',async(_event,payload)=>{
+  const action=regionContext?.action||'capture';
+  if(action==='ocr') ocrDebug('region-complete', { ok: true, width: payload?.coordinateSpace?.bitmapWidth || null, height: payload?.coordinateSpace?.bitmapHeight || null, platform: process.platform });
   closeOverlay();restoreRegionRequester();
+  if(action==='ocr'){
+    try { await processOcrSelection(payload); }
+    catch (error) {
+      ocrDebug('region-handler-failed', { ok: false, errorName: error.name, platform: process.platform });
+      try { await notifyOcrResult(false, `OCR-tekst vastleggen is mislukt: ${error.message}`); }
+      catch (notificationError) { console.error('[Grabbr OCR] melding mislukt', notificationError.message); }
+    }
+    return;
+  }
   createAnnotationWindow({dataUrl:payload.dataUrl,name:'Grabbr gebied',shadow:false,autoSaveBaseName:'Gebied',coordinateSpace:payload.coordinateSpace});
 });
 ipcMain.on('region:cancel', () => { closeOverlay(); restoreRegionRequester(); });

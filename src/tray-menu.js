@@ -11,6 +11,7 @@ function buildTrayTemplate(platform, actions, options={}) {
     capture('Venster vastleggen',actions.captureWindow,'window',icons.window),
     capture('Gebied vastleggen',actions.captureRegion,'region',icons.region),
     capture('Scherm vastleggen',actions.captureScreen,'screen',icons.screen),
+    capture('OCR-tekst vastleggen',actions.captureOcr,'ocr',icons.ocr),
     {type:'separator'},
     {label:'Laatste screenshot openen',click:actions.openLastScreenshot},
     {label:'Instellingen',click:actions.openSettings,icon:icons.settings},

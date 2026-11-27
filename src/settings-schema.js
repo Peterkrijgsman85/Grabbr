@@ -13,7 +13,7 @@ const DEFAULT_SETTINGS=Object.freeze({
 });
 const bounded=(v,min,max,fallback)=>Number.isFinite(Number(v))?Math.max(min,Math.min(max,Math.round(Number(v)))):fallback;
 function migrateSettings(raw={},defaultDirectory=null){
-  const validShortcuts=validateSettings(raw.shortcuts).valid?{...raw.shortcuts}:{...DEFAULT_SHORTCUTS};
+  const shortcutValidation=validateSettings(raw.shortcuts);const validShortcuts=shortcutValidation.valid?shortcutValidation.settings:{...DEFAULT_SHORTCUTS};
   const legacyAnnotation=raw.annotation||{};
   const legacyStartup=raw.startup||{};
   const legacyStorage=raw.storage||{};

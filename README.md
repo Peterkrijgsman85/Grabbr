@@ -15,6 +15,21 @@ Grabbr is een screenshottool voor **macOS en Windows** met vensterselectie, full
 - Migratie van de 0.7.3-instelling `closeAfterCopy` naar de nieuwe actie.
 - Handmatige update-detectie en maximaal dagelijkse controle tegen gepubliceerde GitHub Releases, zonder download of installatie.
 - Taggestuurde GitHub Draft Release-flow voor macOS arm64 en Windows x64.
+- Lokale **OCR-tekst vastleggen** via dezelfde gebiedsselectie-overlay.
+
+### OCR-tekst vastleggen
+
+Start OCR via het macOS-menubalkmenu, Windows System Tray-menu of de configureerbare globale sneltoets onder **Instellingen → Sneltoetsen**. Selecteer een gebied zoals bij area capture. Grabbr herkent uitsluitend lokaal de tekst in dat geselecteerde beeldgebied, schrijft de genormaliseerde platte tekst naar het systeemklembord en toont een native notificatie. Er wordt geen annotatie- of hoofdvenster geopend.
+
+- macOS gebruikt het lokale Vision-framework en NSPasteboard/pbcopy-fallbacks.
+- Windows gebruikt `Windows.Media.Ocr` en het lokale Windows-clipboard.
+- Er is geen cloud-OCR, upload, account, token of telemetrie.
+- Bij lege herkenning wordt het clipboard niet aangeraakt.
+- OCR- of clipboardfouten geven een niet-blokkerende notificatie en openen geen vervolgvenster.
+
+De macOS-helper gebruikt `/usr/bin/osascript` met JXA, AppKit en Vision. De afbeelding wordt rechtstreeks als PNG via stdin verwerkt met `VNImageRequestHandler.initWithDataOptions`; de eerdere NSImage→CGImage-bridge is verwijderd. Notificaties gebruiken eerst een native `display notification`-route en vallen daarna terug op Electron Notification. Windows gebruikt vaste PowerShell/WinRT-helperpaden.
+
+In source/development mode logt Grabbr de OCR-fasen naar de terminal met prefix `[Grabbr OCR]`: selectie ontvangen, helperpreflight, helperstart, OCR-resultaatstatus, clipboardstatus en notificatiestatus. Alleen methode, platform, byteaantal en afmetingen worden gelogd — nooit de afbeelding of herkende tekst. In packaged mode staat deze logging uit, tenzij `GRABBR_OCR_DEBUG=1` expliciet is gezet.
 
 ### Update-detectie
 
