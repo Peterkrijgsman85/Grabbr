@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'none'" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Grabbr</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="titlebar">
+      <div class="brand"><img src="../assets/icon.svg" alt="" /><span>Grabbr</span></div>
+      <div class="capture-group">
+        <button id="captureWindow" class="primary">＋ Venster</button>
+        <button id="captureRegion">Gebied</button>
+        <button id="captureScreen">Scherm</button>
+      </div>
+      <div class="header-actions">
+        <button id="undoBtn" title="Ongedaan maken (Ctrl/Cmd+Z)" disabled>↶</button>
+        <button id="redoBtn" title="Opnieuw (Ctrl/Cmd+Shift+Z)" disabled>↷</button>
+        <span class="separator"></span>
+        <button id="zoomOut" title="Uitzoomen">−</button>
+        <span id="zoomLabel">100%</span>
+        <button id="zoomIn" title="Inzoomen">＋</button>
+        <button id="fitBtn" title="Passend maken">Passend</button>
+        <span class="separator"></span>
+        <button id="settingsBtn" title="Instellingen">⚙ Instellingen</button>
+        <button id="copyBtn" disabled>⧉ Kopiëren</button>
+        <button id="saveBtn" class="primary" disabled>Opslaan</button>
+      </div>
+    </header>
+
+    <main class="main-layout">
+      <aside class="toolbar" aria-label="Annotatiegereedschap">
+        <div class="tool-group-label">Bewerken</div>
+        <button class="tool active" data-tool="select" title="Selecteren en verplaatsen (V)"><span>↖</span><small>Selecteer</small></button>
+        <div class="tool-group-label">Tekenen</div>
+        <button class="tool" data-tool="arrow" title="Pijl (A)"><span>➜</span><small>Pijl</small></button>
+        <button class="tool" data-tool="rect" title="Rechthoek (R)"><span>▭</span><small>Kader</small></button>
+        <button class="tool" data-tool="ellipse" title="Ellips (E)"><span>◯</span><small>Ellips</small></button>
+        <button class="tool" data-tool="line" title="Lijn (L)"><span>╱</span><small>Lijn</small></button>
+        <button class="tool" data-tool="pen" title="Vrij tekenen (P)"><span>✎</span><small>Pen</small></button>
+        <button class="tool" data-tool="text" title="Tekst (T)"><span>T</span><small>Tekst</small></button>
+        <button class="tool" data-tool="step" title="Stapnummer (S)"><span>①</span><small>Stap</small></button>
+        <div class="tool-group-label">Verbergen</div>
+        <button class="tool" data-tool="blur" title="Vervagen (B)"><span>▦</span><small>Vervaag</small></button>
+        <button class="tool" data-tool="pixelate" title="Pixeleren (X)"><span>▩</span><small>Pixel</small></button>
+        <button class="tool" data-tool="redact" title="Permanent afdekken (D)"><span>▬</span><small>Redact</small></button>
+        <button class="tool" data-tool="crop" title="Bijsnijden (C)"><span>⌗</span><small>Snij bij</small></button>
+      </aside>
+
+      <section id="workspace" class="workspace">
+        <div id="emptyState" class="empty-state">
+          <img src="../assets/icon.svg" alt="Grabbr" />
+          <h1>Leg iets vast</h1>
+          <p>Kies een venster, gebied of scherm. Alles blijft op deze computer.</p>
+          <div class="empty-buttons">
+            <button id="emptyWindow" class="primary large">Venster vastleggen</button>
+            <button id="emptyRegion" class="large">Gebied vastleggen</button>
+          </div>
+          <kbd>Ctrl/Cmd + Shift + 2</kbd>
+        </div>
+        <div id="canvasViewport" class="canvas-viewport hidden">
+          <div id="canvasStage" class="canvas-stage">
+            <canvas id="editorCanvas" tabindex="0"></canvas>
+          </div>
+        </div>
+        <div id="cropActions" class="floating-actions hidden">
+          <span>Sleep om een gebied te kiezen</span>
+          <button id="cancelCrop">Annuleer</button>
+          <button id="applyCrop" class="primary" disabled>Toepassen</button>
+        </div>
+      </section>
+
+      <aside class="inspector">
+        <section>
+          <h2>Stijl</h2>
+          <label>Kleur</label>
+          <div id="colorPalette" class="palette">
+            <button data-color="#ff3b5c" aria-label="Rood"></button>
+            <button data-color="#ffb020" aria-label="Oranje"></button>
+            <button data-color="#45d483" aria-label="Groen"></button>
+            <button data-color="#35a7ff" aria-label="Blauw"></button>
+            <button data-color="#765cff" class="active" aria-label="Paars"></button>
+            <button data-color="#ffffff" aria-label="Wit"></button>
+            <button data-color="#15171e" aria-label="Zwart"></button>
+            <input id="customColor" type="color" value="#765cff" title="Eigen kleur" />
+          </div>
+          <label for="strokeWidth">Lijndikte</label><div class="range-value-row"><input id="strokeWidth" type="range" min="5" max="50" value="7" /><button id="strokeOutput" class="numeric-value" type="button">7 px</button><input id="strokeManual" class="numeric-manual hidden" type="number" min="1" max="200" /></div>
+          <label for="fontSize">Tekstgrootte</label><div class="range-value-row"><input id="fontSize" type="range" min="8" max="100" value="28" /><button id="fontOutput" class="numeric-value" type="button">28 px</button><input id="fontManual" class="numeric-manual hidden" type="number" min="1" max="200" /></div>
+          <label for="stepSize">Stapgrootte</label><div class="range-value-row"><input id="stepSize" type="range" min="20" max="100" value="44" /><button id="stepOutput" class="numeric-value" type="button">44 px</button><input id="stepManual" class="numeric-manual hidden" type="number" min="1" max="200" /></div>
+        </section>
+        <section id="selectionPanel" class="hidden">
+          <h2>Selectie</h2>
+          <label id="annotationShadowRow" class="check-row hidden"><input id="annotationShadow" type="checkbox" /> Schaduw</label>
+          <button id="deleteSelection" class="danger wide">Verwijderen</button>
+        </section>
+      </aside>
+    </main>
+
+    <footer class="statusbar">
+      <span id="statusText">Klaar</span>
+      <span id="documentInfo"></span>
+    </footer>
+  </div>
+
+  <div id="sourceModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="sourceTitle">
+    <div class="modal-card source-card">
+      <div class="modal-header"><div><h2 id="sourceTitle">Kies een venster</h2><p id="sourceSubtitle">Klik op het venster dat je wilt vastleggen.</p></div><button id="closeSourceModal" class="icon-btn">×</button></div>
+      <div class="source-tabs"><button data-source-kind="window" class="active">Vensters</button><button data-source-kind="screen">Schermen</button></div>
+      <div id="permissionWarning" class="permission-warning hidden">Geef Grabbr toestemming via Systeeminstellingen → Privacy en beveiliging → Scherm- en systeemaudio-opname en start de app opnieuw.</div>
+      <div id="sourceLoading" class="loading"><span></span> Beschikbare bronnen ophalen…</div>
+      <div id="sourceGrid" class="source-grid"></div>
+    </div>
+  </div>
+
+  <div id="textModal" class="modal hidden" role="dialog" aria-modal="true">
+    <form id="textForm" class="modal-card text-card">
+      <h2>Tekst toevoegen</h2>
+      <textarea id="textInput" rows="4" maxlength="500" placeholder="Typ je annotatie…"></textarea>
+      <div class="dialog-actions"><button type="button" id="cancelText">Annuleer</button><button type="submit" class="primary">Toevoegen</button></div>
+    </form>
+  </div>
+
+  <div id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <form id="settingsForm" class="modal-card settings-card">
+      <div class="modal-header settings-header">
+        <div><h2 id="settingsTitle">Instellingen</h2><p>Pas algemeen gedrag, sneltoetsen en opslag aan.</p></div>
+        <button type="button" id="closeSettings" class="icon-btn">×</button>
+      </div>
+      <div class="settings-layout"><nav class="settings-nav"><button type="button" class="active" data-settings-target="general">Algemeen</button><button type="button" data-settings-target="capture">Vastleggen</button><button type="button" data-settings-target="shortcuts">Sneltoetsen</button><button type="button" data-settings-target="editor">Editor</button><button type="button" data-settings-target="about">Over</button></nav><div class="settings-content">
+        <section class="settings-panel active" data-settings-panel="general"><h3>Algemeen</h3>
+        <label class="storage-toggle startup-toggle"><input id="startupEnabled" type="checkbox" /><span><strong>Start met besturingssysteem</strong><small>Start Grabbr automatisch na inloggen.</small></span></label>
+        <label for="afterCopy">Na kopiëren</label><select id="afterCopy"><option value="copy">Alleen kopiëren</option><option value="close">Kopiëren en sluiten</option><option value="minimize">Kopiëren en minimaliseren</option></select>
+        <label class="storage-toggle"><input id="hideGrabbrDuringCapture" type="checkbox" checked /><span><strong>Grabbr-vensters verbergen tijdens vastleggen</strong><small>Uitgeschakeld blijven Grabbr-vensters zichtbaar en selecteerbaar.</small></span></label>
+        </section>
+        <section class="settings-panel" data-settings-panel="capture"><h3>Vastleggen</h3>
+        <label class="storage-toggle"><input id="captureShadowEnabled" type="checkbox" checked /><span><strong>Vensterschaduw</strong><small>Transparante schaduw rond window captures.</small></span></label>
+        <label class="storage-toggle"><input id="autoSaveEnabled" type="checkbox" checked /><span><strong>Automatisch opslaan</strong><small>Bewaar iedere nieuwe capture.</small></span></label>
+        <label class="storage-label" for="storageDirectory">Opslagmap</label><div class="storage-picker"><input id="storageDirectory" type="text" readonly /><button id="chooseStorageDirectory" type="button">Kies map…</button></div>
+        <label class="storage-label" for="filenamePattern">Bestandsnaampatroon</label><input id="filenamePattern" class="settings-text-input" type="text" /><small>Tokens: {date} {time} {year} {month} {day} {hour} {minute} {second} {type} {counter}</small><div class="filename-preview">Voorbeeld: <strong id="filenamePreview"></strong></div>
+        <label class="storage-label" for="outputFormat">Uitvoerformaat</label><select id="outputFormat"><option value="png">PNG</option><option value="jpeg">JPEG</option></select>
+        <div id="jpegQualityRow" class="hidden"><label for="jpegQuality">JPEG-kwaliteit</label><div class="range-value-row"><input id="jpegQuality" type="range" min="1" max="100" value="90" /><span id="jpegQualityValue">90%</span></div></div>
+        </section>
+        <section class="settings-panel" data-settings-panel="shortcuts"><h3>Sneltoetsen</h3>
+        <div class="hotkey-row">
+          <div><strong>Venster vastleggen</strong><small>Open de kiezer voor applicatievensters.</small></div>
+          <input id="hotkeyWindow" class="hotkey-input" type="text" readonly aria-label="Sneltoets voor venster vastleggen" />
+        </div>
+        <div class="hotkey-row">
+          <div><strong>Gebied vastleggen</strong><small>Start direct de fullscreen selectie-overlay.</small></div>
+          <input id="hotkeyRegion" class="hotkey-input" type="text" readonly aria-label="Sneltoets voor gebied vastleggen" />
+        </div>
+        <div class="hotkey-row">
+          <div><strong>Scherm vastleggen</strong><small>Open de kiezer voor beeldschermen.</small></div>
+          <input id="hotkeyScreen" class="hotkey-input" type="text" readonly aria-label="Sneltoets voor scherm vastleggen" />
+        </div>
+        <div class="hotkey-row">
+          <div><strong>OCR-tekst vastleggen</strong><small>Selecteer een gebied en kopieer lokaal herkende tekst.</small></div>
+          <input id="hotkeyOcr" class="hotkey-input" type="text" readonly aria-label="Sneltoets voor OCR-tekst vastleggen" />
+        </div>
+        <p class="hotkey-help">Klik in een veld en druk de gewenste toetsencombinatie in. Gebruik minimaal één modificatietoets, bijvoorbeeld Ctrl, Alt, Shift of Command.</p>
+        </section>
+        <section class="settings-panel" data-settings-panel="editor"><h3>Editor</h3>
+        <label for="defaultStrokeWidth">Standaard lijndikte</label><div class="range-value-row"><input id="defaultStrokeWidth" type="range" min="5" max="50" /><button id="defaultStrokeValue" type="button" class="numeric-value"></button><input id="defaultStrokeManual" class="numeric-manual hidden" type="number" min="1" max="200" /></div>
+        <label for="defaultFontSize">Standaard tekstgrootte</label><div class="range-value-row"><input id="defaultFontSize" type="range" min="8" max="100" /><button id="defaultFontValue" type="button" class="numeric-value"></button><input id="defaultFontManual" class="numeric-manual hidden" type="number" min="1" max="200" /></div>
+        <label for="defaultStepSize">Standaard stapgrootte</label><div class="range-value-row"><input id="defaultStepSize" type="range" min="20" max="100" /><button id="defaultStepValue" type="button" class="numeric-value"></button><input id="defaultStepManual" class="numeric-manual hidden" type="number" min="1" max="200" /></div>
+        <label class="storage-toggle"><input id="defaultAnnotationShadow" type="checkbox" /><span><strong>Standaard annotatieschaduw</strong><small>Voor pijl, lijn, kader, ellips, tekst en stapnummer.</small></span></label>
+        </section>
+        <section class="settings-panel about-panel" data-settings-panel="about">
+          <div class="about-hero"><img src="../assets/icon.svg" alt="Grabbr" /><div><h3>Grabbr</h3><p>Screenshot- en annotatietool voor macOS en Windows.</p></div></div>
+          <dl class="about-meta"><div><dt>Versie</dt><dd id="aboutVersion"></dd></div><div><dt>Platform</dt><dd id="aboutPlatform"></dd></div><div><dt>Architectuur</dt><dd id="aboutArchitecture"></dd></div></dl>
+          <div class="update-settings"><label class="storage-toggle"><input id="automaticUpdateCheck" type="checkbox" checked /><span><strong>Automatisch controleren op updates</strong><small>Controleer bij opstarten en daarna maximaal eenmaal per 24 uur.</small></span></label><div class="update-row"><span>Huidige versie: <strong id="currentVersion"></strong></span><button id="checkUpdatesNow" type="button">Nu controleren</button></div><div id="updateStatus" class="update-status">Nog niet gecontroleerd.</div><div class="about-actions"><button id="viewRelease" type="button" class="hidden">Bekijk release</button><button id="viewGitHub" type="button" class="hidden">GitHub</button></div></div>
+        </section>
+        <div id="settingsError" class="settings-error hidden"></div>
+      </div></div>
+      <div class="settings-actions">
+        <button type="button" id="resetHotkeys">Herstel standaard</button>
+        <span></span>
+        <button type="button" id="cancelSettings">Annuleer</button>
+        <button type="submit" class="primary">Opslaan</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="coordinate-space.js"></script>
+  <script src="model.js"></script>
+  <script src="numeric-values.js"></script>
+  <script src="filename-pattern.js"></script>
+  <script src="hotkeys.js"></script>
+  <script src="capture-policy.js"></script>
+  <script src="obscure-render.js"></script>
+  <script src="canvas-engine.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

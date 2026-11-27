@@ -1,0 +1,3 @@
+const test=require('node:test');const assert=require('node:assert/strict');const {DEFAULT_ANNOTATION_SETTINGS,normalizeAnnotationSettings}=require('../src/annotation-settings.js');
+test('Na kopiëren staat standaard op alleen kopiëren',()=>{assert.equal(DEFAULT_ANNOTATION_SETTINGS.afterCopy,'copy');assert.deepEqual(normalizeAnnotationSettings(undefined),{afterCopy:'copy'});});
+test('oude true/false migreren naar close/copy en minimize blijft behouden',()=>{assert.deepEqual(normalizeAnnotationSettings({closeAfterCopy:true}),{afterCopy:'close'});assert.deepEqual(normalizeAnnotationSettings({closeAfterCopy:false}),{afterCopy:'copy'});assert.deepEqual(normalizeAnnotationSettings({afterCopy:'minimize'}),{afterCopy:'minimize'});});
