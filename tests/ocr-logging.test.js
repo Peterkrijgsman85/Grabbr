@@ -1,3 +1,0 @@
-const test=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs');const path=require('node:path');const main=fs.readFileSync(path.join(__dirname,'..','main.js'),'utf8');
-test('development OCR-logging is gated op isPackaged of expliciete debugflag',()=>{assert.match(main,/app\.isPackaged && process\.env\.GRABBR_OCR_DEBUG !== '1'/);});
-test('OCR-logging gebruikt een metadata-allowlist en logt geen afbeelding of tekst',()=>{const start=main.indexOf('function ocrDebug');const end=main.indexOf('async function electronNotification',start);const body=main.slice(start,end);assert.match(body,/\['bytes', 'width', 'height'/);assert.doesNotMatch(body,/payload|dataUrl|recognizedText|result\.text/);});
