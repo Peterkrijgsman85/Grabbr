@@ -8,7 +8,8 @@
   const DEFAULTS = Object.freeze({
     window: 'CommandOrControl+Shift+2',
     region: 'CommandOrControl+Shift+3',
-    screen: 'CommandOrControl+Shift+4'
+    screen: 'CommandOrControl+Shift+4',
+    ocr: 'CommandOrControl+Shift+5'
   });
 
   const MODIFIERS = new Set(['Command', 'Cmd', 'Control', 'Ctrl', 'CommandOrControl', 'CmdOrCtrl', 'Alt', 'Option', 'AltGr', 'Shift', 'Super']);

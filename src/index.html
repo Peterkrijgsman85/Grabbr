@@ -133,7 +133,8 @@
         <section class="settings-panel active" data-settings-panel="general"><h3>Algemeen</h3>
         <label class="storage-toggle startup-toggle"><input id="startupEnabled" type="checkbox" /><span><strong>Start met besturingssysteem</strong><small>Start Grabbr automatisch na inloggen.</small></span></label>
         <label for="afterCopy">Na kopiëren</label><select id="afterCopy"><option value="copy">Alleen kopiëren</option><option value="close">Kopiëren en sluiten</option><option value="minimize">Kopiëren en minimaliseren</option></select>
-        <label class="storage-toggle"><input id="hideGrabbrDuringCapture" type="checkbox" checked /><span><strong>Grabbr-vensters verbergen tijdens vastleggen</strong><small>Uitgeschakeld blijven Grabbr-vensters zichtbaar en selecteerbaar.</small></span></label></section>
+        <label class="storage-toggle"><input id="hideGrabbrDuringCapture" type="checkbox" checked /><span><strong>Grabbr-vensters verbergen tijdens vastleggen</strong><small>Uitgeschakeld blijven Grabbr-vensters zichtbaar en selecteerbaar.</small></span></label>
+        <div class="update-settings"><label class="storage-toggle"><input id="automaticUpdateCheck" type="checkbox" checked /><span><strong>Automatisch controleren op updates</strong><small>Controleer bij opstarten en daarna maximaal eenmaal per 24 uur.</small></span></label><div class="update-row"><span>Huidige versie: <strong id="currentVersion"></strong></span><button id="checkUpdatesNow" type="button">Nu controleren</button></div><div id="updateStatus" class="update-status">Nog niet gecontroleerd.</div><button id="viewRelease" type="button" class="hidden">Bekijk release</button></div></section>
         <section class="settings-panel" data-settings-panel="capture"><h3>Vastleggen</h3>
         <label class="storage-toggle"><input id="captureShadowEnabled" type="checkbox" checked /><span><strong>Vensterschaduw</strong><small>Transparante schaduw rond window captures.</small></span></label>
         <label class="storage-toggle"><input id="autoSaveEnabled" type="checkbox" checked /><span><strong>Automatisch opslaan</strong><small>Bewaar iedere nieuwe capture.</small></span></label>
@@ -154,6 +155,10 @@
         <div class="hotkey-row">
           <div><strong>Scherm vastleggen</strong><small>Open de kiezer voor beeldschermen.</small></div>
           <input id="hotkeyScreen" class="hotkey-input" type="text" readonly aria-label="Sneltoets voor scherm vastleggen" />
+        </div>
+        <div class="hotkey-row">
+          <div><strong>OCR-tekst vastleggen</strong><small>Selecteer een gebied en kopieer lokaal herkende tekst.</small></div>
+          <input id="hotkeyOcr" class="hotkey-input" type="text" readonly aria-label="Sneltoets voor OCR-tekst vastleggen" />
         </div>
         <p class="hotkey-help">Klik in een veld en druk de gewenste toetsencombinatie in. Gebruik minimaal één modificatietoets, bijvoorbeeld Ctrl, Alt, Shift of Command.</p>
         </section>

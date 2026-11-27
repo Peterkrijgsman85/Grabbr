@@ -1,0 +1,183 @@
+name: Draft release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test and validate version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - id: version
+        name: Validate stable tag and package.json version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]] || { echo "Invalid version tag: $TAG"; exit 1; }
+          VERSION="$(node -p "require('./package.json').version")"
+          [[ "$TAG" == "v$VERSION" ]] || { echo "Tag $TAG does not match package.json $VERSION"; exit 1; }
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*' --prune
+          stable_ref=''
+          for candidate in origin/main origin/master origin/stable; do
+            if git show-ref --verify --quiet "refs/remotes/$candidate"; then stable_ref="$candidate"; break; fi
+          done
+          [[ -n "$stable_ref" ]] || { echo 'No main, master, or stable branch found'; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" "$stable_ref" || { echo "Tagged commit is not on stable branch $stable_ref"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Install exact build dependencies
+        run: npm install --no-audit --no-fund
+      - name: Run tests
+        run: npm test
+      - name: Static checks
+        run: npm run check
+
+  macos-arm64:
+    name: macOS Apple Silicon arm64
+    needs: test
+    runs-on: macos-14-xlarge
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Assert native Apple Silicon runner
+        run: test "$(uname -m)" = "arm64"
+      - name: Inject release repository metadata
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: node -e "const fs=require('fs');const p=require('./package.json');p.grabbr={...(p.grabbr||{}),githubRepository:process.env.REPOSITORY};fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Build unpacked arm64 app
+        run: npx electron-builder --mac dir --arm64 --publish never -c.mac.identity=null
+      - name: Ad-hoc sign and strictly verify app
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$(find release -type d -name 'Grabbr.app' -print -quit)"
+          test -n "$APP" && test -x "$APP/Contents/MacOS/Grabbr"
+          file "$APP/Contents/MacOS/Grabbr" | grep -q 'arm64'
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=4 "$APP"
+          echo "APP=$APP" >> "$GITHUB_ENV"
+      - name: Package ZIP and DMG
+        shell: bash
+        env:
+          VERSION: ${{ needs.test.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/Grabbr-${VERSION}-macOS-arm64.zip"
+          hdiutil create -volname "Grabbr ${VERSION}" -srcfolder "$APP" -ov -format UDZO "dist/Grabbr-${VERSION}-macOS-arm64.dmg"
+          test -s "dist/Grabbr-${VERSION}-macOS-arm64.zip"
+          test -s "dist/Grabbr-${VERSION}-macOS-arm64.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: dist/*
+          if-no-files-found: error
+
+  windows-x64:
+    name: Windows x64
+    needs: test
+    runs-on: windows-latest
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Assert native x64 runner
+        shell: pwsh
+        run: if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw "Expected AMD64 runner" }
+      - name: Inject release repository metadata
+        shell: pwsh
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: node -e "const fs=require('fs');const p=require('./package.json');p.grabbr={...(p.grabbr||{}),githubRepository:process.env.REPOSITORY};fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Build NSIS and portable x64
+        run: npx electron-builder --win nsis portable --x64 --publish never
+      - name: Normalize and validate artifact names
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.test.outputs.version }}
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $setup = Get-ChildItem release -Recurse -File -Filter '*.exe' | Where-Object Name -Match 'Setup' | Select-Object -First 1
+          $portable = Get-ChildItem release -Recurse -File -Filter '*.exe' | Where-Object Name -NotMatch 'Setup|uninstall' | Select-Object -First 1
+          if (-not $setup) { throw 'NSIS Setup.exe artifact missing' }
+          if (-not $portable) { throw 'Portable.exe artifact missing' }
+          Copy-Item $setup.FullName "dist/Grabbr-$env:VERSION-Windows-x64-Setup.exe"
+          Copy-Item $portable.FullName "dist/Grabbr-$env:VERSION-Windows-x64-Portable.exe"
+          if ((Get-Item "dist/Grabbr-$env:VERSION-Windows-x64-Setup.exe").Length -eq 0) { throw 'Empty Setup artifact' }
+          if ((Get-Item "dist/Grabbr-$env:VERSION-Windows-x64-Portable.exe").Length -eq 0) { throw 'Empty Portable artifact' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: dist/*
+          if-no-files-found: error
+
+  draft-release:
+    name: Create GitHub Draft Release
+    needs: [test, macos-arm64, windows-x64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Validate complete release set and checksums
+        shell: bash
+        env:
+          VERSION: ${{ needs.test.outputs.version }}
+        run: |
+          set -euo pipefail
+          required=(
+            "Grabbr-${VERSION}-macOS-arm64.zip"
+            "Grabbr-${VERSION}-macOS-arm64.dmg"
+            "Grabbr-${VERSION}-Windows-x64-Setup.exe"
+            "Grabbr-${VERSION}-Windows-x64-Portable.exe"
+          )
+          for file in "${required[@]}"; do test -s "dist/$file" || { echo "Missing release artifact: $file"; exit 1; }; done
+          (cd dist && sha256sum "${required[@]}" > "Grabbr-${VERSION}-SHA256SUMS.txt")
+      - name: Create draft release with generated notes
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Grabbr ${{ needs.test.outputs.version }}
+          draft: true
+          prerelease: false
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/Grabbr-${{ needs.test.outputs.version }}-macOS-arm64.zip
+            dist/Grabbr-${{ needs.test.outputs.version }}-macOS-arm64.dmg
+            dist/Grabbr-${{ needs.test.outputs.version }}-Windows-x64-Setup.exe
+            dist/Grabbr-${{ needs.test.outputs.version }}-Windows-x64-Portable.exe
+            dist/Grabbr-${{ needs.test.outputs.version }}-SHA256SUMS.txt

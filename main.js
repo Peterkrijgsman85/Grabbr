@@ -1,7 +1,7 @@
 'use strict';
 
 const electron = require('electron');
-const { app, BrowserWindow, ipcMain, desktopCapturer, dialog, nativeImage, globalShortcut, Tray, Menu, shell, systemPreferences, screen, session } = electron;
+const { app, BrowserWindow, ipcMain, desktopCapturer, dialog, nativeImage, globalShortcut, Tray, Menu, shell, systemPreferences, screen, session, net, Notification } = electron;
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { DEFAULTS, validateSettings } = require('./src/hotkeys.js');
@@ -15,6 +15,13 @@ const { loadRecentScreenshot } = require('./src/recent-screenshot.js');
 const { WindowLifecyclePolicy } = require('./src/window-lifecycle.js');
 const { migrateSettings } = require('./src/settings-schema.js');
 const { filenameFromPattern, filenameForAttempt } = require('./src/filename-pattern.js');
+const { isCheckDue, normalizeRepository, isSafeReleaseUrl } = require('./src/update-check.js');
+const { checkForUpdate } = require('./src/update-service.js');
+const { extractAndCopyText } = require('./src/ocr-service.js');
+const { writeTextToSystemClipboard } = require('./src/system-text-clipboard.js');
+const { completeOcrSelection } = require('./src/ocr-flow-controller.js');
+const { showNativeNotification } = require('./src/native-notification.js');
+const packageMetadata = require('./package.json');
 
 app.setName('Grabbr');
 
@@ -35,6 +42,9 @@ let general = { hideGrabbrDuringCapture: true };
 let captureSettings = { windowShadow: true };
 let editorSettings = { strokeWidth: 7, fontSize: 28, stepSize: 44, annotationShadow: false };
 let recent = { lastSavedPath: null };
+let updates = { automatic: true, lastCheckedAt: null, includePrereleases: false };
+let updateStatus = { state: 'idle', message: 'Nog niet gecontroleerd.' };
+const githubRepository = normalizeRepository(process.env.GRABBR_GITHUB_REPOSITORY || packageMetadata.grabbr?.githubRepository);
 let regionContext = null;
 const annotationWindows = new WindowRegistry();
 const annotationPayloads = new Map();
@@ -56,6 +66,7 @@ async function loadSettings() {
     general={hideGrabbrDuringCapture:migrated.general.hideGrabbrDuringCapture};
     captureSettings=migrated.capture;
     editorSettings=migrated.editor;
+    updates=migrated.updates;
     recent=migrated.recent;
     lastSavedPath = recent.lastSavedPath;
   } catch {
@@ -63,7 +74,7 @@ async function loadSettings() {
     storage = { autoSave: true, directory: defaultDirectory };
     startup = { openAtLogin: false };
     annotation = { ...DEFAULT_ANNOTATION_SETTINGS };
-    general={hideGrabbrDuringCapture:true}; captureSettings={windowShadow:true}; editorSettings={strokeWidth:7,fontSize:28,stepSize:44,annotationShadow:false};
+    general={hideGrabbrDuringCapture:true}; captureSettings={windowShadow:true}; editorSettings={strokeWidth:7,fontSize:28,stepSize:44,annotationShadow:false}; updates={automatic:true,lastCheckedAt:null,includePrereleases:false};
     recent = { lastSavedPath: null };
   }
   await fs.mkdir(storage.directory, { recursive: true }).catch(() => {});
@@ -74,7 +85,7 @@ async function saveSettings() {
   await fs.writeFile(settingsPath(), JSON.stringify({
     shortcuts,
     general:{startup:startup.openAtLogin,afterCopy:annotation.afterCopy,hideGrabbrDuringCapture:general.hideGrabbrDuringCapture},
-    capture:captureSettings, storage, editor:editorSettings, recent
+    capture:captureSettings, storage, editor:editorSettings, updates, recent
   }, null, 2), 'utf8');
 }
 
@@ -91,7 +102,7 @@ function settingsSnapshot() {
     storage: { ...storage },
     startup: nativeStartupState(),
     annotation: { ...annotation }
-    ,general:{...general},capture:{...captureSettings},editor:{...editorSettings},recent:{...recent}
+    ,general:{...general},capture:{...captureSettings},editor:{...editorSettings},updates:{...updates},updateStatus:{...updateStatus},githubRepository,recent:{...recent}
   };
 }
 
@@ -100,6 +111,23 @@ function broadcastSettings() {
   for (const win of [mainWindow, ...annotationWindows.values()]) {
     if (win && !win.isDestroyed()) win.webContents.send('settings:updated', snapshot);
   }
+}
+
+async function performUpdateCheck({ manual = false } = {}) {
+  if (!manual && (!updates.automatic || !isCheckDue(updates.lastCheckedAt))) return { ...updateStatus, skipped: true };
+  if (!githubRepository) {
+    updateStatus = { state: 'error', message: 'Updatecontrole is niet geconfigureerd voor deze bronbuild.' };
+    broadcastSettings();
+    return updateStatus;
+  }
+  updateStatus = { state: 'checking', message: 'Controleren op updates…' };
+  broadcastSettings();
+  const checkedAt = new Date().toISOString();
+  updateStatus = { ...(await checkForUpdate({repository:githubRepository,currentVersion:app.getVersion(),includePrereleases:updates.includePrereleases,fetchImpl:net?.fetch?.bind(net)})),checkedAt };
+  updates.lastCheckedAt = checkedAt;
+  await saveSettings().catch(() => {});
+  broadcastSettings();
+  return { ...updateStatus };
 }
 
 function nativeStartupState() {
@@ -226,6 +254,16 @@ function activeGrabbrWindow() {
 }
 
 function showCapture(mode = 'window') {
+  if (mode === 'ocr') {
+    const focused = BrowserWindow.getFocusedWindow();
+    const requester = focused && (focused === mainWindow || focused === settingsWindow || annotationWindows.has(focused)) ? focused : null;
+    beginRegionCapture(requester, 'ocr').catch(async error => {
+      ocrDebug('selection-start-failed', { ok: false, errorName: error.name, platform: process.platform });
+      try { await notifyOcrResult(false, `OCR-tekst vastleggen mislukt: ${error.message}`); }
+      catch (notificationError) { console.error('[Grabbr OCR] melding mislukt', notificationError.message); }
+    });
+    return;
+  }
   const host = activeGrabbrWindow();
   if (mode === 'region') {
     beginRegionCapture(host).catch(error => notifyCaptureError(error, host));
@@ -242,6 +280,63 @@ function notifyCaptureError(error, target = mainWindow) {
   win.webContents.send('capture:error', error.message || 'Gebiedsselectie kon niet worden gestart.');
 }
 
+function ocrDebug(stage, metadata = {}) {
+  if (app.isPackaged && process.env.GRABBR_OCR_DEBUG !== '1') return;
+  const safe = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    if (['bytes', 'width', 'height', 'ok', 'stage', 'recognitionMethod', 'clipboardMethod', 'errorName', 'method', 'platform'].includes(key)) safe[key] = value;
+  }
+  console.info(`[Grabbr OCR] ${stage}`, safe);
+}
+
+async function electronNotification(success, title, message) {
+  if (!Notification || typeof Notification.isSupported !== 'function' || !Notification.isSupported()) throw new Error('Electron Notification wordt niet ondersteund.');
+  await new Promise((resolve, reject) => {
+    const notification = new Notification({ title, body: message, silent: false });
+    let settled = false;
+    const timer = setTimeout(() => { if (!settled) { settled = true; resolve(); } }, 1800);
+    notification.once?.('show', () => { if (!settled) { settled = true; clearTimeout(timer); resolve(); } });
+    notification.once?.('failed', (_event, error) => { if (!settled) { settled = true; clearTimeout(timer); reject(new Error(error || 'Electron Notification faalde.')); } });
+    notification.show();
+  });
+  return { ok: true, method: 'Electron Notification' };
+}
+
+async function notifyOcrResult(success, message) {
+  const title = success ? 'Grabbr — tekst gekopieerd' : 'Grabbr — OCR';
+  const failures = [];
+  try {
+    const result = await showNativeNotification(process.platform, title, message);
+    ocrDebug('notification-native', { ok: true, method: result.method, platform: process.platform });
+    return result;
+  } catch (error) { failures.push(`native: ${error.message}`); ocrDebug('notification-native-failed', { ok: false, errorName: error.name, platform: process.platform }); }
+  try {
+    const result = await electronNotification(success, title, message);
+    ocrDebug('notification-electron', { ok: true, method: result.method });
+    return result;
+  } catch (error) { failures.push(`electron: ${error.message}`); ocrDebug('notification-electron-failed', { ok: false, errorName: error.name }); }
+  if (process.platform === 'win32' && tray && typeof tray.displayBalloon === 'function') {
+    tray.displayBalloon({ title, content: message, iconType: success ? 'info' : 'warning', noSound: false });
+    ocrDebug('notification-balloon', { ok: true, method: 'tray balloon' });
+    return { ok: true, method: 'tray balloon' };
+  }
+  console[success ? 'info' : 'warn'](`${title}: ${message}`);
+  throw new Error(`Geen native OCR-melding kon worden getoond (${failures.join(' | ')}).`);
+}
+
+async function processOcrSelection(payload) {
+  return completeOcrSelection(payload, {
+    extractAndCopy: extractAndCopyText,
+    serviceDependencies: {
+      platform: process.platform,
+      ocrOptions: { log: ocrDebug },
+      clipboardOptions: { electronClipboard, platform: process.platform }
+    },
+    notify: notifyOcrResult,
+    log: ocrDebug
+  });
+}
+
 function createTray() {
   const iconPath = isMac ? path.join(__dirname, 'assets', 'trayTemplate.png') : path.join(__dirname, 'assets', 'icon.png');
   const sourceIcon = nativeImage.createFromPath(iconPath);
@@ -253,7 +348,7 @@ function createTray() {
 }
 function trayMenuIcons(){
   const result={};
-  for(const name of ['window','region','screen','settings','grabbr']){
+  for(const name of ['window','region','screen','ocr','settings','grabbr']){
     const icon=nativeImage.createFromPath(path.join(__dirname,'assets','menu',`${name}.png`)).resize({width:16,height:16});
     if(isMac) icon.setTemplateImage(true); result[name]=icon;
   }
@@ -273,6 +368,7 @@ function refreshTrayMenu(){
     captureWindow: () => showCapture('window'),
     captureRegion: () => showCapture('region'),
     captureScreen: () => showCapture('screen'),
+    captureOcr: () => showCapture('ocr'),
     openLastScreenshot: () => openLastScreenshot(),
     openSettings:()=>openSettingsWindow(),
     openApp: () => { ensureMainWindow().show(); mainWindow.focus(); },
@@ -322,7 +418,7 @@ function registerShortcuts(next = shortcuts) {
   if (!checked.valid) return { ok: false, reason: checked.reason, action: checked.action };
   const previous = { ...shortcuts };
   globalShortcut.unregisterAll();
-  const actions = { window: () => showCapture('window'), region: () => showCapture('region'), screen: () => showCapture('screen') };
+  const actions = { window: () => showCapture('window'), region: () => showCapture('region'), screen: () => showCapture('screen'), ocr: () => showCapture('ocr') };
   shortcutStatus = {};
   for (const [action, accelerator] of Object.entries(checked.settings)) {
     const ok = globalShortcut.register(accelerator, actions[action]);
@@ -347,7 +443,7 @@ function restoreRegionRequester() {
   if (context?.wasVisible && context.requester && !context.requester.isDestroyed()) context.requester.focus();
 }
 
-async function beginRegionCapture(requester = activeGrabbrWindow()) {
+async function beginRegionCapture(requester = activeGrabbrWindow(), action = 'capture') {
   if (overlayWindow && !overlayWindow.isDestroyed()) { overlayWindow.focus(); return; }
   const targetDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   const requesterWasVisible=Boolean(requester?.isVisible());
@@ -355,7 +451,7 @@ async function beginRegionCapture(requester = activeGrabbrWindow()) {
   if(general.hideGrabbrDuringCapture){
     for(const win of [mainWindow,settingsWindow,...annotationWindows.values()]) if(win&&!win.isDestroyed()&&win.isVisible()){hiddenWindows.push(win);win.hide();}
   }
-  regionContext = { requester, wasVisible: requesterWasVisible, hiddenWindows };
+  regionContext = { requester, wasVisible: requesterWasVisible, hiddenWindows, action };
   await new Promise(resolve => setTimeout(resolve, 160));
   const requestedWidth = Math.min(8192, Math.round(targetDisplay.bounds.width * targetDisplay.scaleFactor));
   const requestedHeight = Math.min(8192, Math.round(targetDisplay.bounds.height * targetDisplay.scaleFactor));
@@ -409,6 +505,8 @@ app.whenReady().then(async () => {
     }
   });
   createWindow(); createTray(); registerShortcuts(shortcuts);
+  setTimeout(() => performUpdateCheck({ manual: false }), 2500).unref?.();
+  setInterval(() => performUpdateCheck({ manual: false }), 60 * 60 * 1000).unref?.();
   app.on('activate', () => { lifecyclePolicy.activateExistingMainWindow(mainWindow); });
 });
 
@@ -476,10 +574,16 @@ ipcMain.handle('settings:update-all',async(_event,next)=>{
   const shortcutResult=registerShortcuts(next.shortcuts||shortcuts); if(!shortcutResult.ok)return shortcutResult;
   const migrated=migrateSettings({...next,shortcuts:shortcutResult.shortcuts,recent},storage.directory);
   const startupResult=applyStartupPreference(migrated.general.startup); if(!startupResult.ok)return startupResult;
-  shortcuts=migrated.shortcuts; general=migrated.general; captureSettings=migrated.capture; storage=migrated.storage; editorSettings=migrated.editor;
+  shortcuts=migrated.shortcuts; general=migrated.general; captureSettings=migrated.capture; storage=migrated.storage; editorSettings=migrated.editor; updates=migrated.updates;
   startup={openAtLogin:general.startup}; annotation={afterCopy:general.afterCopy};
   applyCaptureVisibilityProtection(); await saveSettings(); broadcastSettings(); refreshTrayMenu();
   return {ok:true,...settingsSnapshot()};
+});
+ipcMain.handle('updates:check-now', async () => performUpdateCheck({ manual: true }));
+ipcMain.handle('updates:open-release', async (_event, url) => {
+  if (!isSafeReleaseUrl(url, githubRepository)) return { ok: false, reason: 'De release-URL is niet toegestaan.' };
+  try { await shell.openExternal(url); return { ok: true }; }
+  catch (error) { return { ok: false, reason: `De releasepagina kon niet worden geopend: ${error.message}` }; }
 });
 
 ipcMain.handle('capture:start-region', async event => {
@@ -496,8 +600,19 @@ ipcMain.handle('capture:restore-grabbr-windows',event=>{
   const hidden=captureHiddenWindows.get(event.sender.id)||[];captureHiddenWindows.delete(event.sender.id);
   for(const win of hidden)if(win&&!win.isDestroyed())win.show();return true;
 });
-ipcMain.on('region:complete',(_event,payload)=>{
+ipcMain.on('region:complete',async(_event,payload)=>{
+  const action=regionContext?.action||'capture';
+  if(action==='ocr') ocrDebug('region-complete', { ok: true, width: payload?.coordinateSpace?.bitmapWidth || null, height: payload?.coordinateSpace?.bitmapHeight || null, platform: process.platform });
   closeOverlay();restoreRegionRequester();
+  if(action==='ocr'){
+    try { await processOcrSelection(payload); }
+    catch (error) {
+      ocrDebug('region-handler-failed', { ok: false, errorName: error.name, platform: process.platform });
+      try { await notifyOcrResult(false, `OCR-tekst vastleggen is mislukt: ${error.message}`); }
+      catch (notificationError) { console.error('[Grabbr OCR] melding mislukt', notificationError.message); }
+    }
+    return;
+  }
   createAnnotationWindow({dataUrl:payload.dataUrl,name:'Grabbr gebied',shadow:false,autoSaveBaseName:'Gebied',coordinateSpace:payload.coordinateSpace});
 });
 ipcMain.on('region:cancel', () => { closeOverlay(); restoreRegionRequester(); });
@@ -546,4 +661,3 @@ ipcMain.handle('image:save', async (event, { dataUrl, suggestedName = 'Grabbr.pn
 });
 ipcMain.handle('image:show-last', () => { if (lastSavedPath) shell.showItemInFolder(lastSavedPath); return Boolean(lastSavedPath); });
 ipcMain.handle('window:hide', event => { BrowserWindow.fromWebContents(event.sender)?.hide(); return true; });
-ipcMain.handle('external:open', (_event, url) => shell.openExternal(url));

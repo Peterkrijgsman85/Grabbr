@@ -27,7 +27,8 @@ contextBridge.exposeInMainWorld('grabbr', {
   saveImage: payload => ipcRenderer.invoke('image:save', payload),
   showLastSaved: () => ipcRenderer.invoke('image:show-last'),
   hideWindow: () => ipcRenderer.invoke('window:hide'),
-  openExternal: url => ipcRenderer.invoke('external:open', url),
+  checkUpdatesNow: () => ipcRenderer.invoke('updates:check-now'),
+  openRelease: url => ipcRenderer.invoke('updates:open-release', url),
   onOpenCapture: callback => {
     const listener = (_event, mode) => callback(mode);
     ipcRenderer.on('capture:open', listener);
