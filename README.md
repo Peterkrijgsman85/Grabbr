@@ -2,6 +2,10 @@
 
 Grabbr is een screenshottool voor **macOS en Windows** met vensterselectie, fullscreen gebiedsselectie, een instelbare vensterschaduw en een uitgebreide annotatie-editor. De app gebruikt geen account, backend of cloudopslag.
 
+## Release-infrastructuur 0.7.5
+
+De macOS releasejob gebruikt `macos-15`. De regressietests koppelen de veiligheidscontroles niet meer aan één specifieke runnernaam, maar valideren semantisch dat de arm64-job een ondersteunde macOS-runner gebruikt, na de testjob draait, `uname -m = arm64` afdwingt, expliciet arm64 bouwt en de executable-architectuur controleert. De draft-releasejob moet aantoonbaar wachten op test, macOS en Windows.
+
 > Status: functioneel prototype / uitbreidbare MVP-basis.
 
 ## Nieuw in 0.7.4
